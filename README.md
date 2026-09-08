@@ -354,7 +354,7 @@ This diagram illustrates Aura's multi-layered architecture—designed for real-t
 | Component | Path | Role |
 |-----------|------|------|
 | **Entry point** | `main.py` | FastAPI + Uvicorn server, pywebview window, asyncio orchestration |
-| **Window manager** | `window_manager.py` | Win32 stealth, global hotkeys, transparency, scrolling |
+| **Window manager** | `window_manager.py` | Cross-platform stealth (Win32 & macOS Cocoa/AppKit), global hotkeys, transparency, continuous scrolling |
 | **WebSocket API** | `api/websocket.py` | Real-time client ↔ server event streaming |
 | **Config API** | `api/config_api.py` | REST endpoints for settings, providers, transparency |
 | **Session manager** | `api/session_manager.py` | Interview lifecycle and state management |
@@ -370,34 +370,36 @@ This diagram illustrates Aura's multi-layered architecture—designed for real-t
 
 ## ⌨️ The Control Room: Global Hotkeys for Stealth Operations
 
-Never leave the interview window. Control everything instantly with our ergonomic hotkey system, designed for maximum discretion and efficiency. **All hotkeys function seamlessly while Aura is in Stealth Mode.**
+Never leave the interview window. Control everything instantly with our ergonomic hotkey system, designed for maximum discretion and efficiency. **All hotkeys function seamlessly while SuperAssist is in Stealth Mode.**
 
-| Category | Hotkey | Action | Stealth Utility |
+> *Note for macOS users:* The `Alt` key maps directly to the `Option` (`⌥`) key on macOS keyboards.
+
+| Category | Hotkey (Win / Mac) | Action | Stealth Utility |
 |:---|:---|:---|:---|
-| **Stealth & Window** | `Alt + Shift + S` | **Activate Proctoring Stealth Mode** | The master key for full undetectability |
-| | `Alt + Z` | Toggle window visibility | Show/hide Aura for your eyes only |
-| | `Alt + X` | Toggle Ghost Mode (click-through) | Interact with apps underneath Aura |
-| | `Alt + 1 / 2 / 3` | Set transparency (40% / 70% / 100%) | Adjust Aura's visibility to your comfort |
-| **Window Movement** | `Alt + I` | Move window up | Position Aura's overlay precisely |
-| | `Alt + J` | Move window down | Position Aura's overlay precisely |
-| | `Alt + ←` | Move window left | Position Aura's overlay precisely |
-| | `Alt + →` | Move window right | Position Aura's overlay precisely |
-| **Content Scrolling** | `Alt + ↑` | Scroll up (hold for continuous) | Navigate AI suggestions within overlay |
-| | `Alt + ↓` | Scroll down (hold for continuous) | Navigate AI suggestions within overlay |
+| **Stealth & Window** | `Alt / Opt + Shift + S` | **Activate Proctoring Stealth Mode** | The master key for full undetectability |
+| | `Alt / Opt + H` | Toggle window visibility | Show/hide overlay (safe replacement for Alt+Z; Alt+Z kept as fallback) |
+| | `Alt / Opt + X` | Toggle Ghost Mode (click-through) | Interact with code editor underneath overlay without stealing focus |
+| | `Alt / Opt + 1 / 2 / 3` | Set transparency (40% / 70% / 100%) | Adjust overlay visibility for your comfort |
+| **Window Movement** | `Alt / Opt + Shift + U` | Move window up (20px) | Precise positioning without stealing focus |
+| | `Alt / Opt + Shift + D` | Move window down (20px) | Precise positioning without stealing focus |
+| | `Alt / Opt + Shift + ,` | Move window left (20px) | Precise positioning without stealing focus |
+| | `Alt / Opt + Shift + .` | Move window right (20px) | Precise positioning without stealing focus |
+| **Content Scrolling** | `Alt / Opt + ,` | Scroll up (hold for continuous) | Navigate AI suggestions (zero cursor collision in editors) |
+| | `Alt / Opt + .` | Scroll down (hold for continuous) | Navigate AI suggestions (zero cursor collision in editors) |
 | | `Home` | Jump to top (reading mode) | Quickly review earlier answers |
 | | `End` | Jump to bottom (auto-scroll) | Return to latest AI response |
 | | `Escape` | Toggle reading mode | Pause auto-scroll to study answers |
-| **Vision AI** | `Alt + V` | Toggle Vision Mode | Enable screenshot capabilities in stealth |
-| | `Alt + S` | Capture screenshot (up to 4) | Discreetly capture problems/diagrams |
-| | `Alt + P` | Process screenshot queue | Get AI analysis overlaid invisibly |
-| | `Alt + R` | Clear screenshot queue | Reset captured images |
-| | `Alt + T` | Cycle vision model | Switch between Gemini/Groq vision |
-| **AI & Audio** | `Alt + Q` | Switch to primary model | Fastest model on demand |
-| | `Alt + W` | Switch to secondary model | Alternative AI personality |
-| | `Alt + E` | Auto-select best model | Let Aura pick the fastest available |
-| | `Alt + M` | Toggle microphone mute | Control your audio input |
-| | `Alt + U` | Universal pause/resume AI | Instantly pause all AI processing |
-| | `Alt + O` | Reset interview session | Start fresh |
+| **Vision AI** | `Alt / Opt + V` | Toggle Vision Mode | Enable screenshot capabilities in stealth |
+| | `Alt / Opt + S` | Capture screenshot (up to 4) | Discreetly capture problem/diagram |
+| | `Alt / Opt + P` | Process screenshot queue | Get AI analysis overlaid invisibly |
+| | `Alt / Opt + R` | Clear screenshot queue | Reset captured images |
+| | `Alt / Opt + T` | Cycle vision model | Switch between Gemini/Groq vision |
+| **AI & Audio** | `Alt / Opt + Q` | Switch to primary model | Fastest model on demand |
+| | `Alt / Opt + W` | Switch to secondary model | Alternative AI personality |
+| | `Alt / Opt + E` | Auto-select best model | Let SuperAssist pick the fastest available |
+| | `Alt / Opt + M` | Toggle microphone mute | Control your audio input |
+| | `Alt / Opt + U` | Universal pause/resume AI | Instantly pause all AI processing |
+| | `Alt / Opt + O` | Reset interview session | Clear interview context and start fresh |
 
 *Complete control. Zero disruption. Maximum advantage. All under the cloak of Stealth Mode.*
 
@@ -753,11 +755,11 @@ SCROLL_INTERVAL_MS=70    # Higher = less frequent
 |-------|-----------|
 | **Runtime** | Python 3.8+, asyncio |
 | **Web framework** | FastAPI + Uvicorn |
-| **Desktop shell** | pywebview (WinForms backend) |
+| **Desktop shell** | pywebview (WinForms on Windows, WebKit Cocoa on macOS) |
 | **Speech-to-text** | Deepgram SDK v3 |
 | **LLM clients** | OpenAI-compatible SDK (Groq, Cerebras, Gemini, OpenRouter) |
-| **Global hotkeys** | pynput |
-| **Win32 integration** | ctypes — capture protection, transparency, window management |
+| **Global hotkeys** | pynput (cross-platform with macOS Accessibility support) |
+| **OS Stealth integration** | Win32 ctypes (`WDA_EXCLUDEFROMCAPTURE`) & macOS Cocoa/AppKit (`NSWindowSharingNone`) |
 | **Frontend** | Vanilla HTML/CSS/JS with WebSocket streaming |
 | **Config** | pydantic-settings + python-dotenv |
 

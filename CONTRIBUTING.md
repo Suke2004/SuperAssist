@@ -1,6 +1,6 @@
-# 🤝 Contributing to Aura
+# 🤝 Contributing to SuperAssist
 
-First off — **thank you** for wanting to contribute! Every bug report, feature idea, and pull request makes Aura better for everyone.
+First off — **thank you** for wanting to contribute! Every bug report, feature idea, and pull request makes SuperAssist better for everyone.
 
 ---
 
@@ -8,23 +8,26 @@ First off — **thank you** for wanting to contribute! Every bug report, feature
 
 ```bash
 # 1. Fork & clone
-git clone https://github.com/YOUR_USERNAME/aura.git
-cd aura
+git clone https://github.com/YOUR_USERNAME/SuperAssist.git
+cd SuperAssist
 
-# 2. Create a virtual environment
+# 2. Automated launch (recommended):
+# On Windows:
+run.bat
+# On macOS / Linux:
+chmod +x run.sh
+./run.sh
+
+# OR manual setup:
 python -m venv venv
+# Windows:
 venv\Scripts\activate
+# macOS / Linux:
+source venv/bin/activate
 
-# 3. Install dependencies
 pip install -r requirements.txt
-
-# 4. Copy config templates
 cp .env.example .env
 cp ai_providers.example.json ai_providers.json
-
-# 5. Add your API keys to .env and ai_providers.json
-
-# 6. Run
 python main.py
 ```
 
@@ -69,32 +72,32 @@ python main.py
 ## 📁 Project Structure
 
 ```
-aura/
+SuperAssist/
 ├── main.py                 # App entry point — FastAPI server + pywebview
-├── window_manager.py       # Stealth mode, hotkeys, Win32 API integration
-├── api/                    # FastAPI route handlers
-├── core/                   # Core business logic and config
-├── services/               # AI providers, Deepgram, vision processing
+├── window_manager.py       # Cross-platform stealth (Win32 & Cocoa), hotkeys, transparency
+├── api/                    # FastAPI route handlers & WebSocket streaming
+├── core/                   # Prompts, config, and business logic
+├── services/               # LLM failover, Deepgram STT, vision processing
 ├── web/                    # Frontend — HTML/CSS/JS served by pywebview
 ├── .env                    # Environment variables (secrets — not committed)
 ├── ai_providers.json       # AI provider config (secrets — not committed)
-├── run.bat                 # Automated setup & launch script
-└── silent_run.vbs          # Invisible launch (no terminal window)
+├── run.bat                 # Automated setup & launch script (Windows)
+├── run.sh                  # Automated setup & launch script (macOS / Linux)
+└── silent_run.vbs          # Invisible launch for Windows
 ```
 
 ---
 
 ## 🎯 Areas We Need Help With
 
-| Area | Description |
-|:-----|:------------|
-| 🐧 **Linux Support** | Port Win32 stealth APIs to X11/Wayland equivalents |
-| 🍎 **macOS Support** | Port Win32 stealth APIs to Cocoa/AppKit |
-| 🌐 **More AI Providers** | Add support for new LLM providers (Anthropic, Mistral, etc.) |
-| 🎨 **UI/UX** | Improve the overlay interface, themes, animations |
-| 📝 **Documentation** | Better setup guides, tutorials, video walkthroughs |
-| 🧪 **Testing** | Unit tests, integration tests, CI/CD pipeline |
-| 🌍 **Localization** | Multi-language support for the UI |
+| Area | Description | Status |
+|:-----|:------------|:-------|
+| 🍎 **macOS Support** | Cocoa/AppKit capture protection, Dock hiding, floating levels | ✅ Completed |
+| 🐧 **Linux Support** | Port stealth APIs to X11/Wayland equivalents | 🚧 Open |
+| 🌐 **More AI Providers** | Add support for new LLM providers (Anthropic, Mistral, etc.) | 🚧 Open |
+| 🎨 **UI/UX** | Improve themes, animations, glanceable components | 🚧 Open |
+| 📝 **Documentation** | Setup guides, tutorials, video walkthroughs | 🚧 Open |
+| 🧪 **Testing** | Unit tests, mock audio tests, CI/CD pipeline | 🚧 Open |
 
 ---
 
