@@ -420,8 +420,9 @@ class AsyncioServiceThread:
 asyncio_service_thread = AsyncioServiceThread()
 
 # --- Webview Setup (Main Thread) ---
-# Configurable window title to prevent detection via task manager / taskbar
-APP_WINDOW_TITLE = os.getenv("WINDOW_TITLE", "Host Process for Windows Services")
+# Configurable window title to prevent detection via task manager / Activity Monitor
+_default_title = "Activity Monitor" if sys.platform == "darwin" else "Host Process for Windows Services"
+APP_WINDOW_TITLE = os.getenv("WINDOW_TITLE", _default_title)
 
 def setup_webview_window():
     """Setup and configure the webview window"""

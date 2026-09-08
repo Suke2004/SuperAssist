@@ -65,10 +65,24 @@ export async function startAudioProcessing(micId, onAudioData) {
                 sampleRate: TARGET_SAMPLE_RATE
             }
         });
-        systemStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
 
-        if (!micStream || !systemStream) {
-            console.error("Could not get both audio streams.");
+        // 2. Obtain display stream for screen audio & screenshots
+        // On macOS WebKit or when system audio capture is unsupported/declined,
+        // fall back gracefully so the interview session never hard-fails.
+        try {
+            systemStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        } catch (displayErr) {
+            console.warn("⚠️ getDisplayMedia with audio failed or restricted, trying video-only (macOS fallback):", displayErr);
+            try {
+                systemStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+            } catch (videoErr) {
+                console.warn("⚠️ Could not get display video stream:", videoErr);
+                systemStream = null;
+            }
+        }
+
+        if (!micStream) {
+            console.error("Could not get microphone audio stream.");
             stopAudioProcessing();
             return false;
         }

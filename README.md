@@ -409,7 +409,7 @@ Never leave the interview window. Control everything instantly with our ergonomi
 
 | Requirement | Details |
 |------------|---------|
-| **Operating System** | **Windows 10 or 11** — fully supported on `master` (stealth features use Win32 APIs). <br>**macOS** — work-in-progress port on the [`macos`](https://github.com/Rkcr7/Aura-AI/tree/macos) branch (AppKit/pyobjc, some features still being ported). |
+| **Operating System** | **Windows 10 or 11** — fully supported (stealth uses Win32 `WDA_EXCLUDEFROMCAPTURE`). <br>**macOS (Sonoma, Sequoia, Ventura, Monterey)** — fully supported (stealth uses Cocoa `NSWindowSharingNone`, floating levels, accessory Dock hiding). |
 | **Python** | 3.8 or newer ([download here](https://www.python.org/downloads/)) — check **"Add Python to PATH"** during install |
 | **Microphone** | Any mic — built-in laptop mic, headset, or USB mic all work |
 | **Internet** | Required for API calls to Deepgram (STT) and LLM providers |
@@ -422,18 +422,34 @@ Never leave the interview window. Control everything instantly with our ergonomi
 ### Step 1 · Clone & Install
 
 ```bash
-git clone https://github.com/Rkcr7/Aura-AI
-cd Aura-AI
+git clone https://github.com/Suke2004/SuperAssist.git
+cd SuperAssist
 
-click run.bat to auto install depedencies
-OR
+# On Windows:
+run.bat
+
+# On macOS / Linux:
+chmod +x run.sh
+./run.sh
+```
+
+**Alternative manual setup:**
+```bash
 # Create & activate virtual environment
 python -m venv venv
+
+# Windows:
 venv\Scripts\activate
+# macOS / Linux:
+source venv/bin/activate
 
 # Install all dependencies
 pip install -r requirements.txt
 ```
+
+> **🍎 macOS Permissions Notice:**
+> - **Accessibility:** Required for global hotkeys (`Option+H`, `Option+X`, `Option+1/2/3`, etc.). Grant permission to your terminal (Terminal or iTerm) in **System Settings > Privacy & Security > Accessibility**.
+> - **Screen Recording:** Required for vision screenshot capture. Grant permission in **System Settings > Privacy & Security > Screen Recording**.
 
 ### Step 2 · Get Your API Keys (All Free!)
 

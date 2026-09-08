@@ -6,7 +6,6 @@
 
 import os
 import ctypes
-import ctypes.wintypes as wintypes
 import webview
 import time
 import tkinter as tk
@@ -15,6 +14,9 @@ from typing import Optional
 from threading import Thread
 from pynput import keyboard
 from dotenv import dotenv_values
+
+IS_WINDOWS = platform.system() == "Windows"
+IS_MACOS = platform.system() == "Darwin"
 
 # --- Scroll Configuration ---
 # Configurable via .env — controls Alt+Up/Down scroll behaviour
@@ -51,55 +53,51 @@ SCROLL_AMOUNT_PX = _env_setting("SCROLL_SPEED_PX", 120, 1)
 SCROLL_INTERVAL_MS = _env_setting("SCROLL_INTERVAL_MS", 50, 10)
 SCREEN_SHARE_SCAN_INTERVAL_S = _env_setting("SCREEN_SHARE_SCAN_INTERVAL_S", 1.0, 0.2, float)
 
-# --- Win32 API Constants ---
-# These flags are used with the SetWindowDisplayAffinity function.
-# WDA_EXCLUDEFROMCAPTURE is a comprehensive flag that prevents the window from being
-# captured by most common methods, rendering it as a black rectangle in recordings.
+# --- Win32 API Constants & Functions (Windows Only) ---
 WDA_EXCLUDEFROMCAPTURE = 0x00000011
 SW_HIDE = 0
 SW_SHOW = 5
 SW_SHOWNOACTIVATE = 4  # Show window without giving it focus - crucial for stealth
 
-# --- Win32 Function Loading ---
-# We use the ctypes library to load functions directly from user32.dll, a core
-# Windows library for UI management. This gives us low-level control over the window.
+_user32 = None
+_HAS_GET_DISPLAY_AFFINITY = False
 
-# Load the user32 library
-_user32 = ctypes.windll.user32
+if IS_WINDOWS:
+    try:
+        import ctypes.wintypes as wintypes
+        _user32 = ctypes.windll.user32
 
-# Define the function signature for SetWindowDisplayAffinity
-# This tells ctypes what kind of arguments the function expects (a window handle and a flag)
-# and what it returns (a boolean indicating success).
-_user32.SetWindowDisplayAffinity.restype  = wintypes.BOOL
-_user32.SetWindowDisplayAffinity.argtypes = (wintypes.HWND, wintypes.DWORD)
+        _user32.SetWindowDisplayAffinity.restype  = wintypes.BOOL
+        _user32.SetWindowDisplayAffinity.argtypes = (wintypes.HWND, wintypes.DWORD)
 
-# Define the function signature for FindWindowW
-# This is a fallback method to find a window by its title if the primary method fails.
-_user32.FindWindowW.restype               = wintypes.HWND
-_user32.FindWindowW.argtypes              = (wintypes.LPCWSTR, wintypes.LPCWSTR)
+        _user32.FindWindowW.restype               = wintypes.HWND
+        _user32.FindWindowW.argtypes              = (wintypes.LPCWSTR, wintypes.LPCWSTR)
 
-# Define function signatures for ShowWindow and IsWindowVisible
-_user32.ShowWindow.argtypes = (wintypes.HWND, wintypes.INT)
-_user32.ShowWindow.restype = wintypes.BOOL
-_user32.IsWindowVisible.argtypes = (wintypes.HWND,)
-_user32.IsWindowVisible.restype = wintypes.BOOL
+        _user32.ShowWindow.argtypes = (wintypes.HWND, wintypes.INT)
+        _user32.ShowWindow.restype = wintypes.BOOL
+        _user32.IsWindowVisible.argtypes = (wintypes.HWND,)
+        _user32.IsWindowVisible.restype = wintypes.BOOL
 
-# Define the function signature for GetWindowDisplayAffinity
-#   BOOL GetWindowDisplayAffinity(HWND hWnd, DWORD *pdwAffinity)
-# This is the read-back counterpart of SetWindowDisplayAffinity: it lets us
-# actually confirm the protection took effect instead of assuming it did.
-# The lookup is guarded so an older/unusual Windows build that does not export
-# the symbol keeps working with the previous best-effort check.
-try:
-    _user32.GetWindowDisplayAffinity.restype = wintypes.BOOL
-    _user32.GetWindowDisplayAffinity.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
-    _HAS_GET_DISPLAY_AFFINITY = True
-except AttributeError:
-    _HAS_GET_DISPLAY_AFFINITY = False
+        try:
+            _user32.GetWindowDisplayAffinity.restype = wintypes.BOOL
+            _user32.GetWindowDisplayAffinity.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+            _HAS_GET_DISPLAY_AFFINITY = True
+        except AttributeError:
+            _HAS_GET_DISPLAY_AFFINITY = False
 
-# IsWindow is used as the fallback verification check
-_user32.IsWindow.argtypes = (wintypes.HWND,)
-_user32.IsWindow.restype = wintypes.BOOL
+        _user32.IsWindow.argtypes = (wintypes.HWND,)
+        _user32.IsWindow.restype = wintypes.BOOL
+    except Exception as e:
+        print(f"⚠️ Failed initializing Win32 user32 APIs: {e}")
+
+# --- macOS Cocoa / AppKit Setup (macOS Only) ---
+HAS_PYOBJC = False
+if IS_MACOS:
+    try:
+        from AppKit import NSApp, NSApplication, NSApplicationActivationPolicyAccessory
+        HAS_PYOBJC = True
+    except ImportError:
+        HAS_PYOBJC = False
 
 # Screen sharing indicator detection constants
 SCREEN_SHARE_INDICATORS = [
@@ -264,7 +262,9 @@ _VERIFICATION_KEYWORDS_LOWER = tuple(k.lower() for k in SCREEN_SHARE_VERIFICATIO
 class WindowManager:
     def __init__(self):
         self.hwnd: Optional[int] = None
+        self.native_window = None
         self.is_windows = platform.system() == "Windows"
+        self.is_macos = platform.system() == "Darwin"
         self.current_transparency = 1.0
         self.is_ghost_mode = False
         self.screen_share_monitor_active = False
@@ -281,6 +281,41 @@ class WindowManager:
 
         if self.is_windows:
             self._setup_win32_api_definitions()
+
+    def set_native_window(self, native_win):
+        """Set the macOS native NSWindow object."""
+        self.native_window = native_win
+
+    def _check_macos_accessibility_permission(self) -> bool:
+        """Check and request macOS Accessibility permission for global hotkeys."""
+        if not self.is_macos:
+            return True
+        try:
+            import ctypes
+            app_services = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices')
+            app_services.AXIsProcessTrusted.restype = ctypes.c_bool
+            trusted = app_services.AXIsProcessTrusted()
+            if not trusted:
+                print("⚠️ [macOS] Accessibility permission is NOT granted.")
+                print("   Global hotkeys (Option+H, Option+X, etc.) require Accessibility access.")
+                print("   Please grant Accessibility to Terminal/Python in:")
+                print("   System Settings > Privacy & Security > Accessibility")
+                try:
+                    from Foundation import NSDictionary
+                    options = NSDictionary.dictionaryWithObject_forKey_(True, "AXTrustedCheckOptionPrompt")
+                    import objc
+                    app_services.AXIsProcessTrustedWithOptions.restype = ctypes.c_bool
+                    app_services.AXIsProcessTrustedWithOptions.argtypes = [ctypes.c_void_p]
+                    app_services.AXIsProcessTrustedWithOptions(objc.pyobjc_id(options))
+                except Exception:
+                    pass
+                return False
+            else:
+                print("✅ [macOS] Accessibility permissions confirmed for global hotkeys.")
+                return True
+        except Exception as e:
+            print(f"⚠️ [macOS] Could not verify Accessibility permission: {e}")
+            return True
 
     def _setup_win32_api_definitions(self):
         """Defines all necessary Win32 API functions, constants, and types."""
@@ -355,11 +390,13 @@ class WindowManager:
         self.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
         self.GetWindowRect.restype = wintypes.BOOL
             
-    def set_window_handle(self, window_handle: int):
+    def set_window_handle(self, window_handle):
         """Set the window handle for transparency operations"""
         self.hwnd = window_handle
         if self.is_windows and self.hwnd:
             self._enable_transparency()
+        elif self.is_macos and not self.native_window:
+            self.native_window = window_handle
         
     def _enable_transparency(self):
         """Enable transparency capability for the window"""
@@ -388,14 +425,31 @@ class WindowManager:
         Returns:
             bool: True if successful, False otherwise
         """
-        if not self.is_windows or not self.hwnd:
-            print("Transparency not supported on this platform or no window handle")
+        if not (self.is_windows or self.is_macos):
+            print("Transparency not supported on this platform")
             return False
             
         # Clamp transparency value
         transparency = max(0.0, min(1.0, transparency))
         self.current_transparency = transparency
         
+        if self.is_macos:
+            if not self.native_window:
+                print("Transparency requires native window on macOS")
+                return False
+            try:
+                self.native_window.setOpaque_(False)
+                self.native_window.setAlphaValue_(transparency)
+                print(f"✅ [macOS] Window transparency set to {transparency*100:.0f}%")
+                return True
+            except Exception as e:
+                print(f"❌ [macOS] Error setting transparency: {e}")
+                return False
+
+        if not self.hwnd:
+            print("Transparency requires valid window handle on Windows")
+            return False
+            
         try:
             # Convert to Windows alpha value (0-255)
             alpha = int(transparency * 255)
@@ -446,6 +500,19 @@ class WindowManager:
     
     def find_window_by_title(self, title: str) -> Optional[int]:
         """Find window handle by title"""
+        if self.is_macos:
+            try:
+                from AppKit import NSApplication
+                app = NSApplication.sharedApplication()
+                for win in app.windows():
+                    win_title = str(win.title()) if hasattr(win, 'title') else ""
+                    if win_title == title:
+                        self.set_native_window(win)
+                        return id(win)
+            except Exception:
+                pass
+            return None
+
         if not self.is_windows:
             return None
             
@@ -620,6 +687,24 @@ class WindowManager:
         Returns:
             bool: True if successful, False otherwise
         """
+        if self.is_macos:
+            if not self.native_window:
+                print("Always on top requires native window on macOS")
+                return False
+            try:
+                # NSFloatingWindowLevel = 3, NSNormalWindowLevel = 0
+                level = 3 if on_top else 0
+                self.native_window.setLevel_(level)
+                behavior = self.native_window.collectionBehavior()
+                # NSWindowCollectionBehaviorCanJoinAllSpaces (1) | NSWindowCollectionBehaviorFullScreenAuxiliary (16)
+                self.native_window.setCollectionBehavior_(behavior | 1 | 16)
+                status = "on top" if on_top else "normal"
+                print(f"✅ [macOS] Window set to {status}")
+                return True
+            except Exception as e:
+                print(f"❌ [macOS] Error setting always on top: {e}")
+                return False
+
         if not self.is_windows or not self.hwnd:
             print("Always on top not supported on this platform or no window handle")
             return False
@@ -695,14 +780,30 @@ class WindowManager:
             "transparency": self.current_transparency,
             "transparency_percent": int(self.current_transparency * 100),
             "is_transparent": self.current_transparency < 1.0,
-            "platform_supported": self.is_windows,
-            "window_handle": self.hwnd,
+            "platform_supported": self.is_windows or self.is_macos,
+            "window_handle": self.hwnd or (id(self.native_window) if self.native_window else None),
             "screen_share_monitor_active": self.screen_share_monitor_active,
             "hidden_screen_share_windows": len(self.hidden_screen_share_windows)
         }
 
     def set_ghost_mode(self, enabled: bool):
         """Enable or disable 'click-through' (ghost) mode."""
+        if self.is_macos:
+            if not self.native_window:
+                return
+            try:
+                self.native_window.setIgnoresMouseEvents_(enabled)
+                self.is_ghost_mode = enabled
+                if enabled:
+                    print("👻 [macOS] Ghost Mode Enabled (click-through)")
+                else:
+                    print("🖱️ [macOS] Ghost Mode Disabled (normal interaction)")
+                self.set_always_on_top(True)
+                return
+            except Exception as e:
+                print(f"❌ [macOS] Error setting ghost mode: {e}")
+                return
+
         if not self.is_windows or not self.hwnd:
             return
 
@@ -736,12 +837,18 @@ class WindowManager:
         - Ghost mode (click-through) to prevent accidental focus
         - Screen capture protection
         - Always on top but without focus
-        - Hidden from taskbar
+        - Hidden from taskbar / Dock
         
         Use global hotkeys (Alt+Z, Alt+X, etc.) to interact safely.
         """
-        if not self.is_windows or not self.hwnd:
+        if not (self.is_windows or self.is_macos):
+            print("❌ Proctoring stealth mode requires Windows or macOS")
+            return False
+        if self.is_windows and not self.hwnd:
             print("❌ Proctoring stealth mode requires Windows and valid window handle")
+            return False
+        if self.is_macos and not self.native_window:
+            print("❌ Proctoring stealth mode requires macOS and valid native window")
             return False
         
         try:
@@ -750,7 +857,7 @@ class WindowManager:
             # 1. Enable ghost mode (click-through)
             self.set_ghost_mode(True)
             
-            # 2. Hide from taskbar
+            # 2. Hide from taskbar / Dock
             self.hide_from_taskbar()
             
             # 3. Set always on top but without focus
@@ -761,9 +868,9 @@ class WindowManager:
             
             print("✅ PROCTORING STEALTH MODE ENABLED")
             print("   🚨 IMPORTANT: Use ONLY global hotkeys to interact:")
-            print("   📌 Alt+Z: Toggle visibility (no focus change)")
-            print("   📌 Alt+X: Toggle ghost mode")
-            print("   📌 Alt+1/2/3: Adjust transparency")
+            print("   📌 Alt/Option+H: Toggle visibility (no focus change)")
+            print("   📌 Alt/Option+X: Toggle ghost mode")
+            print("   📌 Alt/Option+1/2/3: Adjust transparency")
             print("   📌 DO NOT click on the window - it will trigger focus detection!")
             
             return True
@@ -783,6 +890,23 @@ class WindowManager:
         Returns:
             bool: True if successful, False otherwise
         """
+        if self.is_macos:
+            if not self.native_window:
+                print("❌ [macOS] Window movement requires valid native window")
+                return False
+            try:
+                frame = self.native_window.frame()
+                # On macOS, origin (0, 0) is bottom-left, so positive dy (moving down) decreases y
+                new_x = frame.origin.x + dx
+                new_y = frame.origin.y - dy
+                from Foundation import NSPoint
+                self.native_window.setFrameOrigin_(NSPoint(new_x, new_y))
+                print(f"🎯 [macOS] Window moved {dx:+d}px horizontal, {dy:+d}px vertical (stealth)")
+                return True
+            except Exception as e:
+                print(f"❌ [macOS] Error moving window: {e}")
+                return False
+
         if not self.is_windows or not self.hwnd:
             print("❌ Window movement requires Windows and valid window handle")
             return False
@@ -831,6 +955,23 @@ class WindowManager:
 
     def toggle_visibility(self):
         """Toggle the window's visibility without changing focus (stealth mode)."""
+        if self.is_macos:
+            if not self.native_window:
+                print("Window visibility control: no native window on macOS.")
+                return
+            try:
+                if self.native_window.isVisible():
+                    self.native_window.orderOut_(None)
+                    print("🕵️‍ [macOS] Window hidden via global hotkey.")
+                else:
+                    self.native_window.orderFrontRegardless()
+                    print("✨ [macOS] Window shown via global hotkey (stealth - no focus change).")
+                    self.set_always_on_top(True)
+                return
+            except Exception as e:
+                print(f"❌ [macOS] Error toggling visibility: {e}")
+                return
+
         if not self.is_windows or not self.hwnd:
             print("Window visibility control not supported or no window handle.")
             return
@@ -847,7 +988,17 @@ class WindowManager:
             self.set_always_on_top(True)
 
     def hide_from_taskbar(self) -> bool:
-        """Hide the window from the taskbar by setting WS_EX_TOOLWINDOW."""
+        """Hide the window from the taskbar / macOS Dock."""
+        if self.is_macos:
+            try:
+                from AppKit import NSApp, NSApplicationActivationPolicyAccessory
+                NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+                print("✅ [macOS] App hidden from Dock and Cmd+Tab switcher")
+                return True
+            except Exception as e:
+                print(f"⚠️ [macOS] Could not hide from Dock: {e}")
+                return False
+
         if not self.is_windows or not self.hwnd:
             print("Cannot hide from taskbar: Not on Windows or no window handle")
             return False
@@ -867,6 +1018,8 @@ class WindowManager:
     def _start_hotkey_listener_thread(self):
         """The actual listener thread for global hotkeys."""
         print("🎧 Starting global hotkey listener thread...")
+        if self.is_macos:
+            self._check_macos_accessibility_permission()
 
         def on_hide_show():
             self.toggle_visibility()
@@ -1238,38 +1391,38 @@ class WindowManager:
 
     def start_hotkey_listener(self):
         """Starts the global hotkey listener in a separate thread."""
-        if not self.is_windows:
+        if not (self.is_windows or self.is_macos):
             print("Global hotkeys not supported on this platform.")
             return
 
         print("🚀 Initializing global hotkey listener...")
-        print("   Alt+X: Toggle ghost mode (click-through)")
-        print("   Alt+H: Toggle window visibility (stealth - no focus)")
-        print("   Alt+,: Continuous scroll up (hold for continuous)")
-        print("   Alt+.: Continuous scroll down (hold for continuous)")
-        print("   Alt+Shift+,: Move window left (stealth - no focus)")
-        print("   Alt+Shift+.: Move window right (stealth - no focus)")
-        print("   Alt+Shift+U: Move window up (stealth - no focus)")
-        print("   Alt+Shift+D: Move window down (stealth - no focus)")
-        print("   Alt+V: Toggle vision mode")
-        print("   Alt+S: Capture screenshot")
-        print("   Alt+P: Process screenshots with AI")
-        print("   Alt+R: Reset screenshot queue")
-        print("   Alt+O: Reset interview session")
-        print("   Alt+Q: Switch to primary AI preset")
-        print("   Alt+W: Switch to secondary AI preset")
-        print("   Alt+E: Auto-select best AI preset")
-        print("   Alt+T: Switch vision model")
-        print("   Alt+M: Toggle microphone mute")
-        print("   Alt+U: Toggle universal mute (pause)")
-        print("   Alt+1: Set transparent (40% opacity)")
-        print("   Alt+2: Set semi-transparent (70% opacity)")
-        print("   Alt+3: Set opaque (100% opacity)")
-        print("   Alt+Shift+S: Enable proctoring stealth mode")
+        print("   Alt/Option+X: Toggle ghost mode (click-through)")
+        print("   Alt/Option+H: Toggle window visibility (stealth - no focus)")
+        print("   Alt/Option+,: Continuous scroll up (hold for continuous)")
+        print("   Alt/Option+.: Continuous scroll down (hold for continuous)")
+        print("   Alt/Option+Shift+,: Move window left (stealth - no focus)")
+        print("   Alt/Option+Shift+.: Move window right (stealth - no focus)")
+        print("   Alt/Option+Shift+U: Move window up (stealth - no focus)")
+        print("   Alt/Option+Shift+D: Move window down (stealth - no focus)")
+        print("   Alt/Option+V: Toggle vision mode")
+        print("   Alt/Option+S: Capture screenshot")
+        print("   Alt/Option+P: Process screenshots with AI")
+        print("   Alt/Option+R: Reset screenshot queue")
+        print("   Alt/Option+O: Reset interview session")
+        print("   Alt/Option+Q: Switch to primary AI preset")
+        print("   Alt/Option+W: Switch to secondary AI preset")
+        print("   Alt/Option+E: Auto-select best AI preset")
+        print("   Alt/Option+T: Switch vision model")
+        print("   Alt/Option+M: Toggle microphone mute")
+        print("   Alt/Option+U: Toggle universal mute (pause)")
+        print("   Alt/Option+1: Set transparent (40% opacity)")
+        print("   Alt/Option+2: Set semi-transparent (70% opacity)")
+        print("   Alt/Option+3: Set opaque (100% opacity)")
+        print("   Alt/Option+Shift+S: Enable proctoring stealth mode")
         
         # Ensure we have the handle before starting
-        if not self.hwnd:
-            expected_title = os.getenv("WINDOW_TITLE", "Host Process for Windows Services")
+        if not self.hwnd and not self.native_window:
+            expected_title = os.getenv("WINDOW_TITLE", "Activity Monitor" if self.is_macos else "Host Process for Windows Services")
             if not (self.find_window_by_title(expected_title) or self.find_window_by_title("SuperAssist") or self.find_window_by_title("Aura")):
                  print("❌ Cannot start hotkey listener: Application window not found.")
                  return
@@ -1303,6 +1456,12 @@ def make_app_opaque() -> bool:
 
 def find_aura_window() -> bool:
     """Find and set app window for transparency control"""
+    if IS_MACOS:
+        if window_manager.native_window is not None:
+            return True
+        expected_title = os.getenv("WINDOW_TITLE", "Activity Monitor")
+        return bool(window_manager.find_window_by_title(expected_title) or window_manager.find_window_by_title("SuperAssist") or window_manager.find_window_by_title("Aura"))
+
     expected_title = os.getenv("WINDOW_TITLE", "Host Process for Windows Services")
     hwnd = window_manager.find_window_by_title(expected_title) or window_manager.find_window_by_title("SuperAssist") or window_manager.find_window_by_title("Aura")
     return hwnd is not None
@@ -1353,17 +1512,102 @@ def test_screen_share_detection():
     
     return indicators
 
+def _get_macos_nswindow(window):
+    """Obtain native NSWindow from pywebview window instance on macOS."""
+    if not IS_MACOS:
+        return None
+
+    # 1. Check window.native directly (can be NSWindow or WKWebView)
+    native = getattr(window, 'native', None)
+    if native is not None:
+        if hasattr(native, 'setSharingType_'):
+            return native
+        if hasattr(native, 'window'):
+            win_prop = getattr(native, 'window')
+            win_obj = win_prop() if callable(win_prop) else win_prop
+            if win_obj and hasattr(win_obj, 'setSharingType_'):
+                return win_obj
+
+    # 2. Check window.gui (BrowserView)
+    gui = getattr(window, 'gui', None)
+    if gui is not None:
+        win_obj = getattr(gui, 'window', None)
+        if win_obj and hasattr(win_obj, 'setSharingType_'):
+            return win_obj
+
+    # 3. Check window._window
+    private_win = getattr(window, '_window', None)
+    if private_win and hasattr(private_win, 'setSharingType_'):
+        return private_win
+
+    # 4. Search via NSApplication.sharedApplication().windows()
+    try:
+        from AppKit import NSApplication
+        app = NSApplication.sharedApplication()
+        windows = app.windows()
+        expected_title = os.getenv("WINDOW_TITLE", "Activity Monitor")
+        for win in windows:
+            title = str(win.title()) if hasattr(win, 'title') else ""
+            if title in (expected_title, getattr(window, 'title', ''), "SuperAssist", "Aura"):
+                return win
+        if windows and len(windows) > 0:
+            return windows[0]
+    except Exception as e:
+        print(f"⚠️ [macOS] Error searching NSApplication windows: {e}")
+
+    return None
+
+
+def _apply_macos_capture_protection(window) -> bool:
+    """Apply screen capture protection on macOS using Cocoa NSWindow setSharingType_(0).
+    
+    NSWindowSharingNone = 0 completely excludes the window from all screenshots,
+    screen sharing (Zoom, Teams, Meet), and screen recordings (OBS, QuickTime).
+    """
+    print("🛡️ [macOS] APPLYING SCREEN CAPTURE PROTECTION...")
+    native_win = _get_macos_nswindow(window)
+    if not native_win:
+        time.sleep(0.1)
+        native_win = _get_macos_nswindow(window)
+        
+    if not native_win:
+        print("❌ [macOS] CRITICAL: Could not obtain native NSWindow reference! Screen capture protection NOT applied!")
+        return False
+        
+    try:
+        # NSWindowSharingNone = 0
+        native_win.setSharingType_(0)
+        print("✅ [macOS] SUCCESS: NSWindowSharingNone (0) applied! Window is HIDDEN from screen capture/sharing!")
+        
+        # Register native window with window_manager
+        window_manager.set_native_window(native_win)
+        window_manager.set_always_on_top(True)
+        window_manager.hide_from_taskbar()
+        
+        # Verify the protection was applied
+        verify_protection(native_win)
+        return True
+    except Exception as e:
+        print(f"❌ [macOS] FAILED: Could not set window sharing type: {e}")
+        return False
+
+
 def apply_capture_protection(window):
     """
     Applies display affinity to exclude the window from screen capture.
-
-    This function is the heart of the "stealth" feature. It first tries to get
-    the window handle directly from a private pywebview attribute and, if that fails,
-    falls back to searching for the window by its title.
+    On Windows: Uses SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE).
+    On macOS: Uses NSWindow.setSharingType_(0) (NSWindowSharingNone).
 
     Args:
         window: The pywebview window object.
     """
+    if IS_MACOS:
+        return _apply_macos_capture_protection(window)
+
+    if not IS_WINDOWS or not _user32:
+        print(f"⚠️ Screen capture protection not supported on {platform.system()}")
+        return False
+
     hwnd = None
     print("🛡️ APPLYING SCREEN CAPTURE PROTECTION...")
 
@@ -1428,17 +1672,34 @@ def verify_protection(hwnd) -> Optional[bool]:
     """Verify that capture protection is actually applied.
 
     Returns True when the window's display affinity reads back as
-    WDA_EXCLUDEFROMCAPTURE, False when it reads back as something else, and
-    None when verification was not possible (API unavailable, call failed, or
-    an unexpected error). Diagnostic only - this never raises and the result
-    can safely be ignored.
+    WDA_EXCLUDEFROMCAPTURE (or NSWindowSharingNone on macOS), False when it reads
+    back as something else, and None when verification was not possible.
     """
+    if IS_MACOS:
+        target = hwnd if hasattr(hwnd, 'sharingType') else window_manager.native_window
+        if target and hasattr(target, 'sharingType'):
+            try:
+                sharing_type = target.sharingType()
+                if sharing_type == 0:
+                    print("✅ [macOS] CONFIRMED: NSWindow.sharingType is NSWindowSharingNone (0)")
+                    return True
+                else:
+                    print(f"❌ [macOS] MISMATCH: NSWindow.sharingType is {sharing_type}, expected 0")
+                    return False
+            except Exception as e:
+                print(f"⚠️ [macOS] Could not verify sharingType: {e}")
+        return None
+
+    if not IS_WINDOWS or not _user32:
+        return None
+
     try:
         # Try to get current display affinity (this is a read-only check)
         print(f"🔬 Verifying protection on window {hex(hwnd)}...")
         
         # Read the affinity back so this is a real confirmation, not a guess.
         if _HAS_GET_DISPLAY_AFFINITY:
+            import ctypes.wintypes as wintypes
             affinity = wintypes.DWORD(0)
             if _user32.GetWindowDisplayAffinity(hwnd, ctypes.byref(affinity)):
                 if affinity.value == WDA_EXCLUDEFROMCAPTURE:
