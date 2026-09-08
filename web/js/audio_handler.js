@@ -182,14 +182,29 @@ export async function startAudioProcessing(micId, onAudioData) {
  * Updates the microphone gain node based on the central mute manager state.
  */
 function updateMicGainNode() {
-    if (!micGainNode || !audioContext) return;
-    
     const isMuted = muteManager.isMicrophoneMuted();
     const targetGain = isMuted ? 0 : 1;
     
-    // Smooth transition to avoid audio pops
-    micGainNode.gain.setTargetAtTime(targetGain, audioContext.currentTime, 0.05);
-    devLog(`🎤 Microphone gain set to ${targetGain} based on mute manager.`);
+    // 1. Physically mute/unmute the browser microphone track for true hardware silence
+    if (micStream) {
+        micStream.getAudioTracks().forEach(track => {
+            track.enabled = !isMuted;
+        });
+    }
+
+    // 2. Control the Web Audio GainNode
+    if (micGainNode && audioContext) {
+        if (audioContext.state === 'suspended') {
+            audioContext.resume().catch(() => {});
+        }
+        try {
+            micGainNode.gain.cancelScheduledValues(audioContext.currentTime);
+            micGainNode.gain.setValueAtTime(targetGain, audioContext.currentTime);
+        } catch (e) {
+            micGainNode.gain.value = targetGain;
+        }
+    }
+    devLog(`🎤 Microphone ${isMuted ? 'MUTED' : 'ACTIVE'} (gain=${targetGain})`);
 }
 
 // --- Legacy Functions (now wrappers for MuteManager) ---

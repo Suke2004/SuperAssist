@@ -115,6 +115,9 @@ class InterviewSession:
             self.state["process_all_speakers"] = payload['processAllSpeakers']
         if 'isUniversallyMuted' in payload:
             self.state["is_universally_muted"] = payload['isUniversallyMuted']
+        if 'is_muted' in payload:
+            self.state["is_muted"] = payload['is_muted']
+            print(f"🎤 Session {self.session_id}: Microphone mute state updated to {self.state['is_muted']}")
         await self._send_json("config_updated", self.state)
 
     async def handle_switch_preset(self, payload: dict):

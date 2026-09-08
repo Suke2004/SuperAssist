@@ -59,8 +59,11 @@ class LiveInterviewUI {
         this.resetButton = document.getElementById('reset-interview-btn');
         this.muteButton = document.getElementById('mute-btn');
         
-        // Listen to the mute manager for state changes
-        muteManager.on('stateChange', (status) => this.handleMuteStateChange(status));
+        // Listen to the mute manager for state changes (register once)
+        if (!this.muteListenerInitialized) {
+            muteManager.on('stateChange', (status) => this.handleMuteStateChange(status));
+            this.muteListenerInitialized = true;
+        }
         
         this.setupEventListeners();
     }
@@ -1246,9 +1249,11 @@ class LiveInterviewUI {
 
     // Toggle microphone mute via the UI button
     toggleMute() {
-        // The hotkey manager and mute manager now handle the logic.
-        // This just needs to trigger the toggle.
-        muteManager.toggleMicrophoneMute();
+        if (window.stateManager && typeof window.stateManager.toggleMicMute === 'function') {
+            window.stateManager.toggleMicMute();
+        } else {
+            muteManager.toggleMicrophoneMute();
+        }
     }
 
     // Central handler for all mute state changes
@@ -1260,10 +1265,15 @@ class LiveInterviewUI {
     // Update mute button appearance
     updateMuteButton(isMuted) {
         if (this.muteButton) {
+            const textSpan = this.muteButton.querySelector('.mute-text');
             if (isMuted) {
                 this.muteButton.classList.add('muted');
+                if (textSpan) textSpan.textContent = 'Muted';
+                this.muteButton.title = 'Microphone is Muted (Click or Alt+M to unmute)';
             } else {
                 this.muteButton.classList.remove('muted');
+                if (textSpan) textSpan.textContent = 'Mute';
+                this.muteButton.title = 'Microphone is Active (Click or Alt+M to mute)';
             }
         }
     }

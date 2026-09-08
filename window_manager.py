@@ -47,7 +47,7 @@ def _env_setting(name: str, default, minimum, cast=int):
     return value if value >= minimum else minimum
 
 
-SCROLL_AMOUNT_PX = _env_setting("SCROLL_SPEED_PX", 200, 1)
+SCROLL_AMOUNT_PX = _env_setting("SCROLL_SPEED_PX", 120, 1)
 SCROLL_INTERVAL_MS = _env_setting("SCROLL_INTERVAL_MS", 50, 10)
 SCREEN_SHARE_SCAN_INTERVAL_S = _env_setting("SCREEN_SHARE_SCAN_INTERVAL_S", 1.0, 0.2, float)
 

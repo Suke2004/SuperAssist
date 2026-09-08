@@ -7,7 +7,7 @@ import { devLog } from './config.js';
 class MuteManager {
     constructor() {
         // --- State Properties ---
-        this._isMicrophoneMuted = true; // Traditional microphone mute (input to app)
+        this._isMicrophoneMuted = false; // Microphone starts unmuted (ready for interview)
         this._isUniversallyMuted = false; // System-wide pause for all audio processing
 
         // --- Event Handling ---
@@ -37,6 +37,13 @@ class MuteManager {
         devLog(`🎤 Microphone mute state changed to: ${isMuted}`);
         this.emit('microphoneMuteChange', this._isMicrophoneMuted);
         this.emit('stateChange', this.getMuteStatus());
+
+        // Notify the backend about the microphone mute change
+        if (typeof window.sendSocketMessage === 'function') {
+            window.sendSocketMessage('config_update', {
+                is_muted: this._isMicrophoneMuted
+            });
+        }
     }
 
     toggleMicrophoneMute() {
@@ -104,6 +111,7 @@ const muteManager = new MuteManager();
 
 // --- Global Functions for Console and Module Access ---
 window.muteManager = muteManager;
+window.toggleMicMute = () => muteManager.toggleMicrophoneMute();
 window.toggleUniversalMute = () => muteManager.toggleUniversalMute();
 window.enableUniversalMute = () => muteManager.setUniversalMute(true);
 window.disableUniversalMute = () => muteManager.setUniversalMute(false);

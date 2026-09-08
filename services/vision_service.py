@@ -293,7 +293,7 @@ class VisionService:
         # Determine primary programming language and context
         primary_language = "C++"  # Default fallback
         language_context = ""
-        sql_available = False
+        sql_available = True
         
         if languages and len(languages) > 0:
             programming_languages = [lang for lang in languages if lang.lower() != 'sql']

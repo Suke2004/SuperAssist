@@ -203,7 +203,7 @@ class GlobalCommandMonitor:
                 self._execute_browser_command('if (window.resetInterview) { window.resetInterview(); } else { console.warn("resetInterview not available"); }')
             elif command == 'scroll':
                 direction = command_data.get('direction', 'down')
-                amount = command_data.get('amount', 150)
+                amount = command_data.get('amount', 90)
                 # Use smooth scrolling with the specified amount
                 if direction == 'up':
                     scroll_amount = -amount
