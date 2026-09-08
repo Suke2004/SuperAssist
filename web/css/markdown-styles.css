@@ -1,0 +1,839 @@
+/* Markdown Styling for Live Interview - Premium Professional Design */
+
+/* ==============================================
+   MARKDOWN HEADERS - Geometric Professional Style
+   ============================================== */
+
+.markdown-header {
+    margin: 0.55rem 0 0.3rem 0;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--text-color);
+    position: relative;
+}
+
+.markdown-h1 {
+    font-size: clamp(1.05rem, 2.5vw, 1.25rem);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    padding-bottom: 0.25rem;
+    margin-bottom: 0.45rem;
+    letter-spacing: -0.01em;
+}
+
+.markdown-h2 {
+    font-size: clamp(0.95rem, 2vw, 1.12rem);
+    border-left: 3px solid #38b2ac;
+    padding-left: 0.5rem;
+    margin-left: -0.5rem;
+    background: rgba(56, 178, 172, 0.05);
+    padding-top: 0.15rem;
+    padding-bottom: 0.15rem;
+    border-radius: 0 3px 3px 0;
+    margin-top: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.markdown-h3 {
+    font-size: clamp(0.88rem, 1.8vw, 1.02rem);
+    border-left: 2px solid rgba(255, 255, 255, 0.2);
+    padding-left: 0.4rem;
+    margin-left: -0.4rem;
+    margin-top: 0.4rem;
+    margin-bottom: 0.2rem;
+}
+
+.markdown-h4 {
+    font-size: clamp(0.82rem, 1.5vw, 0.92rem);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 0.35rem;
+    margin-bottom: 0.15rem;
+}
+
+.markdown-h5,
+.markdown-h6 {
+    font-size: clamp(0.8rem, 1.5vw, 0.88rem);
+    font-weight: 600;
+    margin-top: 0.3rem;
+    margin-bottom: 0.1rem;
+}
+
+/* ==============================================
+   MARKDOWN LISTS - Clean Professional Bullets
+   ============================================== */
+
+.markdown-list {
+    margin: 0.35rem 0;
+    padding-left: 0;
+    list-style: none;
+    position: relative;
+}
+
+.markdown-bullet-list .markdown-list-item {
+    position: relative;
+    padding-left: 1.25rem;
+    margin-bottom: 0.25rem;
+    line-height: 1.45;
+}
+
+.markdown-bullet-list .markdown-list-item::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.65em;
+    width: 4px;
+    height: 4px;
+    background: #38b2ac;
+    border-radius: 1px;
+    transform: translateY(-50%);
+    opacity: 0.8;
+}
+
+.markdown-numbered-list {
+    counter-reset: markdown-counter;
+    margin: 0.35rem 0;
+}
+
+.markdown-numbered-list .markdown-list-item {
+    position: relative;
+    padding-left: 2rem;
+    margin-bottom: 0.5rem;
+    line-height: 1.6;
+    counter-increment: markdown-counter;
+}
+
+.markdown-numbered-list .markdown-list-item::before {
+    content: counter(markdown-counter) ".";
+    position: absolute;
+    left: 0;
+    top: 0;
+    font-weight: 600;
+    color: var(--text-color);
+    opacity: 0.7;
+    min-width: 1.5rem;
+    font-size: 0.9em;
+}
+
+/* Nested List Indentation */
+.markdown-list-item.indent-1 {
+    padding-left: 3rem;
+}
+
+.markdown-list-item.indent-1::before {
+    left: 1.5rem;
+}
+
+.markdown-list-item.indent-2 {
+    padding-left: 4.5rem;
+}
+
+.markdown-list-item.indent-2::before {
+    left: 3rem;
+}
+
+.markdown-list-item.indent-3 {
+    padding-left: 6rem;
+}
+
+.markdown-list-item.indent-3::before {
+    left: 4.5rem;
+}
+
+.markdown-list-item.indent-4 {
+    padding-left: 7.5rem;
+}
+
+.markdown-list-item.indent-4::before {
+    left: 6rem;
+}
+
+/* Nested bullets change style */
+.markdown-bullet-list .markdown-list-item.indent-1::before {
+    border-radius: 50%; /* Circle for level 2 */
+    width: 4px;
+    height: 4px;
+}
+
+.markdown-bullet-list .markdown-list-item.indent-2::before {
+    background: transparent;
+    border: 1px solid var(--text-color);
+    width: 5px;
+    height: 5px;
+}
+
+.markdown-bullet-list .markdown-list-item.indent-3::before,
+.markdown-bullet-list .markdown-list-item.indent-4::before {
+    background: var(--text-color);
+    width: 3px;
+    height: 3px;
+    opacity: 0.5;
+}
+
+/* ==============================================
+   INLINE FORMATTING - Professional Text Styling
+   ============================================== */
+
+/* Emphasis must never be dimmer than the body copy it emphasises. Body text
+   is #ffffff; holding bold and italic at full alpha keeps the weight and slant
+   doing the work, which survives the window's 40-70% opacity intact. */
+.markdown-bold {
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: -0.01em;
+}
+
+.markdown-italic {
+    font-style: italic;
+    color: #ffffff;
+    font-weight: 400;
+}
+
+/* Dimmed once, not twice: opacity 0.6 and a 0.5 alpha colour multiplied to an
+   effective 0.30, which is unreadable once the window is made translucent. */
+.markdown-strikethrough {
+    text-decoration: line-through;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.inline-code {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    padding: 0.15em 0.4em;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.85em;
+    color: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(5px);
+    white-space: nowrap;
+    word-break: keep-all;
+}
+
+/* ==============================================
+   PARAGRAPHS - Professional Spacing
+   ============================================== */
+
+.markdown-paragraph {
+    margin: 0.4rem 0;
+    line-height: 1.48;
+    color: var(--text-color);
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    hyphens: auto;
+}
+
+.markdown-paragraph:first-child {
+    margin-top: 0;
+}
+
+.markdown-paragraph:last-child {
+    margin-bottom: 0;
+}
+
+/* Empty paragraph handling */
+.markdown-paragraph:empty {
+    display: none;
+}
+
+/* ==============================================
+   RESPONSIVE DESIGN - Compact Window Optimization
+   ============================================== */
+
+@media (max-width: 768px) {
+    .markdown-header {
+        margin: 1rem 0 0.75rem 0;
+    }
+    
+    .markdown-h1 {
+        margin-bottom: 1rem;
+        padding-bottom: 0.3rem;
+    }
+    
+    .markdown-h2 {
+        padding-left: 0.75rem;
+        margin-left: -0.75rem;
+    }
+    
+    .markdown-h3 {
+        padding-left: 0.5rem;
+        margin-left: -0.5rem;
+    }
+    
+    .markdown-list {
+        margin: 0.75rem 0;
+    }
+    
+    .markdown-list-item {
+        margin-bottom: 0.4rem;
+    }
+    
+    .markdown-bullet-list .markdown-list-item {
+        padding-left: 1.25rem;
+    }
+    
+    .markdown-numbered-list .markdown-list-item {
+        padding-left: 1.75rem;
+    }
+    
+    .inline-code {
+        padding: 0.1em 0.3em;
+        font-size: 0.8em;
+    }
+}
+
+@media (max-width: 480px) {
+    .markdown-h1 {
+        border-bottom-width: 1px;
+    }
+    
+    .markdown-h2 {
+        border-left-width: 3px;
+        padding-left: 0.5rem;
+        margin-left: -0.5rem;
+    }
+    
+    .markdown-h3 {
+        border-left-width: 1px;
+        padding-left: 0.4rem;
+        margin-left: -0.4rem;
+    }
+    
+    .markdown-bullet-list .markdown-list-item {
+        padding-left: 1rem;
+    }
+    
+    .markdown-numbered-list .markdown-list-item {
+        padding-left: 1.5rem;
+    }
+    
+    .markdown-list-item.indent-1 {
+        padding-left: 2rem;
+    }
+    
+    .markdown-list-item.indent-2 {
+        padding-left: 3rem;
+    }
+    
+    .markdown-list-item.indent-3,
+    .markdown-list-item.indent-4 {
+        padding-left: 4rem;
+    }
+}
+
+/* ==============================================
+   ANIMATION INTEGRATION - Smooth Streaming
+   ============================================== */
+
+.markdown-header,
+.markdown-list,
+.markdown-paragraph {
+    opacity: 1; /* Show containers immediately */
+    animation: markdownFadeIn 0.3s ease forwards;
+}
+
+.markdown-list-item {
+    opacity: 1; /* Show list items immediately */
+    animation: markdownSlideIn 0.2s ease forwards;
+}
+
+@keyframes markdownFadeIn {
+    from {
+        opacity: 0.7;
+        transform: translateY(5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes markdownSlideIn {
+    from {
+        opacity: 0.7;
+        transform: translateX(-5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Reduced stagger for faster appearance */
+.markdown-list-item:nth-child(1) { animation-delay: 0ms; }
+.markdown-list-item:nth-child(2) { animation-delay: 20ms; }
+.markdown-list-item:nth-child(3) { animation-delay: 40ms; }
+.markdown-list-item:nth-child(4) { animation-delay: 60ms; }
+.markdown-list-item:nth-child(5) { animation-delay: 80ms; }
+.markdown-list-item:nth-child(n+6) { animation-delay: 100ms; }
+
+/* ==============================================
+   SPECIAL INTERVIEW FORMATTING
+   ============================================== */
+
+/* Question highlighting for interview context */
+.markdown-header.question-header {
+    background: rgba(100, 210, 255, 0.05);
+    border-left: 4px solid #64d2ff;
+    padding: 0.5rem 1rem;
+    margin-left: -1rem;
+    border-radius: 0 6px 6px 0;
+}
+
+/* Approach/solution headers */
+.markdown-header.approach-header {
+    background: rgba(255, 193, 7, 0.05);
+    border-left: 4px solid #ffc107;
+    padding: 0.5rem 1rem;
+    margin-left: -1rem;
+    border-radius: 0 6px 6px 0;
+}
+
+/* Algorithm steps */
+.markdown-numbered-list.algorithm-steps .markdown-list-item {
+    background: rgba(255, 255, 255, 0.02);
+    padding: 0.5rem 1rem 0.5rem 2rem;
+    margin-bottom: 0.75rem;
+    border-radius: 4px;
+    border-left: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ==============================================
+   INTEGRATION WITH EXISTING STYLES
+   ============================================== */
+
+/* Ensure markdown elements work with streaming */
+.streaming-text .markdown-header,
+.streaming-text .markdown-list,
+.streaming-text .markdown-paragraph {
+    animation: none; /* Disable auto-animation during streaming */
+}
+
+.message.complete .markdown-header,
+.message.complete .markdown-list,
+.message.complete .markdown-paragraph {
+    animation: markdownFadeIn 0.4s ease forwards;
+}
+
+/* Integration with word streaming */
+.streaming-text .word .markdown-bold,
+.streaming-text .word .markdown-italic,
+.streaming-text .word .inline-code {
+    opacity: inherit; /* Inherit opacity from word streaming */
+}
+
+/* Ensure proper text selection */
+.markdown-header::selection,
+.markdown-list-item::selection,
+.markdown-paragraph::selection,
+.markdown-bold::selection,
+.markdown-italic::selection,
+.inline-code::selection {
+    background: rgba(0, 212, 255, 0.3);
+}
+
+/* ==============================================
+   MARKDOWN TABLES - Professional Table Styling
+   ============================================== */
+
+.table-wrapper {
+    margin: 1.5rem 0;
+    overflow-x: auto;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+}
+
+.markdown-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    background: transparent;
+}
+
+.table-header {
+    background: rgba(255, 255, 255, 0.05);
+    border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.95);
+    white-space: nowrap;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 0.5px;
+}
+
+.table-cell {
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-color);
+    vertical-align: top;
+}
+
+.table-header.text-center,
+.table-cell.text-center {
+    text-align: center;
+}
+
+.table-header.text-right,
+.table-cell.text-right {
+    text-align: right;
+}
+
+.markdown-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.markdown-table tbody tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.01);
+}
+
+@media (max-width: 768px) {
+    .table-wrapper {
+        margin: 1rem 0;
+        font-size: 0.8rem;
+    }
+    
+    .table-header,
+    .table-cell {
+        padding: 0.5rem 0.75rem;
+    }
+    
+    .table-header {
+        font-size: 0.75rem;
+    }
+}
+
+/* ==============================================
+   MARKDOWN BLOCKQUOTES - Spoken Pitch & Key Callouts
+   ============================================== */
+
+.markdown-blockquote {
+    margin: 0.6rem 0;
+    padding: 0.65rem 0.95rem;
+    border-left: 3.5px solid #14b8a6;
+    background: linear-gradient(135deg, rgba(20, 184, 166, 0.14) 0%, rgba(13, 148, 136, 0.05) 100%);
+    border-radius: 0 6px 6px 0;
+    font-style: normal;
+    color: #f0fdf4;
+    position: relative;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.markdown-blockquote p {
+    margin: 0;
+    padding-left: 0.25rem;
+    line-height: 1.55;
+    font-size: 0.96rem;
+    letter-spacing: 0.2px;
+}
+
+.markdown-blockquote strong {
+    color: #5eead4;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+@media (max-width: 768px) {
+    .markdown-blockquote {
+        margin: 0.4rem 0;
+        padding: 0.45rem 0.65rem;
+    }
+}
+
+/* ==============================================
+   MARKDOWN HORIZONTAL RULES - Clean Separators
+   ============================================== */
+
+.markdown-hr {
+    margin: 2rem 0;
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.3) 20%, rgba(255, 255, 255, 0.3) 80%, transparent 100%);
+    position: relative;
+}
+
+.markdown-hr::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 6px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+}
+
+@media (max-width: 768px) {
+    .markdown-hr {
+        margin: 1.5rem 0;
+    }
+}
+
+/* ==============================================
+   MARKDOWN TASK LISTS - Interactive Checkboxes
+   ============================================== */
+
+.markdown-task-list {
+    margin: 1rem 0;
+    padding-left: 0;
+    list-style: none;
+}
+
+.markdown-task-item {
+    position: relative;
+    padding-left: 2rem;
+    margin-bottom: 0.5rem;
+    line-height: 1.6;
+    display: flex;
+    align-items: flex-start;
+}
+
+.task-checkbox {
+    position: absolute;
+    left: 0;
+    top: 0.2em;
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    cursor: pointer;
+    opacity: 0;
+    z-index: 2;
+}
+
+.task-checkbox + .task-content::before {
+    content: "";
+    position: absolute;
+    left: -2rem;
+    top: 0.2em;
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 2px;
+    background: rgba(0, 0, 0, 0.2);
+    transition: all 0.2s ease;
+}
+
+.task-checkbox:checked + .task-content::before {
+    background: rgba(34, 197, 94, 0.8);
+    border-color: rgba(34, 197, 94, 1);
+}
+
+.task-checkbox:checked + .task-content::after {
+    content: "✓";
+    position: absolute;
+    left: -1.85rem;
+    top: 0.15em;
+    color: white;
+    font-size: 0.75rem;
+    font-weight: bold;
+    pointer-events: none;
+}
+
+.markdown-task-item.task-checked .task-content {
+    opacity: 0.7;
+    text-decoration: line-through;
+}
+
+.task-content {
+    flex: 1;
+    position: relative;
+}
+
+/* Task list indentation */
+.markdown-task-item.indent-1 {
+    padding-left: 3.5rem;
+}
+
+.markdown-task-item.indent-1 .task-checkbox + .task-content::before {
+    left: -1.5rem;
+}
+
+.markdown-task-item.indent-1 .task-checkbox:checked + .task-content::after {
+    left: -1.35rem;
+}
+
+.markdown-task-item.indent-2 {
+    padding-left: 5rem;
+}
+
+.markdown-task-item.indent-2 .task-checkbox + .task-content::before {
+    left: -1.5rem;
+}
+
+.markdown-task-item.indent-2 .task-checkbox:checked + .task-content::after {
+    left: -1.35rem;
+}
+
+@media (max-width: 768px) {
+    .markdown-task-item {
+        padding-left: 1.75rem;
+        margin-bottom: 0.4rem;
+    }
+    
+    .task-checkbox + .task-content::before {
+        left: -1.75rem;
+        width: 0.9rem;
+        height: 0.9rem;
+    }
+    
+    .task-checkbox:checked + .task-content::after {
+        left: -1.6rem;
+        font-size: 0.7rem;
+    }
+}
+
+/* ==============================================
+   MARKDOWN LINKS - Professional Link Styling
+   ============================================== */
+
+.markdown-link {
+    color: rgba(100, 210, 255, 0.9);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.markdown-link:hover {
+    color: rgba(100, 210, 255, 1);
+    border-bottom-color: rgba(100, 210, 255, 0.5);
+    text-decoration: none;
+}
+
+.markdown-link:visited {
+    color: rgba(147, 100, 255, 0.9);
+}
+
+.markdown-link::after {
+    content: "↗";
+    font-size: 0.7em;
+    margin-left: 0.2em;
+    opacity: 0.6;
+    transition: opacity 0.2s ease;
+}
+
+.markdown-link:hover::after {
+    opacity: 1;
+}
+
+/* ==============================================
+   MARKDOWN IMAGES - Responsive Image Display
+   ============================================== */
+
+.markdown-image {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    margin: 1rem 0;
+    display: block;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.markdown-image:hover {
+    transform: scale(1.02);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+@media (max-width: 768px) {
+    .markdown-image {
+        margin: 0.75rem 0;
+        border-radius: 4px;
+    }
+}
+
+/* ==============================================
+   ENHANCED LIST STYLING FOR NEW FEATURES
+   ============================================== */
+
+/* Updated list indentation to work with task lists */
+.markdown-list .markdown-list-item.indent-1::before,
+.markdown-task-item.indent-1 .task-checkbox + .task-content::before {
+    left: 1.5rem;
+}
+
+.markdown-list .markdown-list-item.indent-2::before,
+.markdown-task-item.indent-2 .task-checkbox + .task-content::before {
+    left: 3rem;
+}
+
+.markdown-list .markdown-list-item.indent-3::before,
+.markdown-task-item.indent-3 .task-checkbox + .task-content::before {
+    left: 4.5rem;
+}
+
+.markdown-list .markdown-list-item.indent-4::before,
+.markdown-task-item.indent-4 .task-checkbox + .task-content::before {
+    left: 6rem;
+}
+
+/* ==============================================
+   ANIMATION INTEGRATION FOR NEW ELEMENTS
+   ============================================== */
+
+.markdown-blockquote,
+.markdown-hr,
+.table-wrapper,
+.markdown-task-list {
+    opacity: 1;
+    animation: markdownFadeIn 0.3s ease forwards;
+}
+
+.markdown-task-item {
+    animation: markdownSlideIn 0.2s ease forwards;
+}
+
+.markdown-link {
+    animation: linkFadeIn 0.3s ease forwards;
+}
+
+.markdown-image {
+    animation: imageFadeIn 0.4s ease forwards;
+}
+
+@keyframes linkFadeIn {
+    from {
+        opacity: 0.5;
+        color: rgba(100, 210, 255, 0.5);
+    }
+    to {
+        opacity: 1;
+        color: rgba(100, 210, 255, 0.9);
+    }
+}
+
+@keyframes imageFadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Ensure new elements work with streaming */
+.streaming-text .markdown-blockquote,
+.streaming-text .markdown-hr,
+.streaming-text .table-wrapper,
+.streaming-text .markdown-task-list,
+.streaming-text .markdown-link,
+.streaming-text .markdown-image {
+    animation: none;
+}
+
+.message.complete .markdown-blockquote,
+.message.complete .markdown-hr,
+.message.complete .table-wrapper,
+.message.complete .markdown-task-list,
+.message.complete .markdown-link,
+.message.complete .markdown-image {
+    animation: markdownFadeIn 0.4s ease forwards;
+}

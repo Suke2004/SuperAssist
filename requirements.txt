@@ -1,0 +1,13 @@
+pywebview[winforms]
+pywin32
+fastapi
+uvicorn[standard]
+pydantic-settings
+openai
+deepgram-sdk==3.*
+requests
+httpx
+orjson
+aiofiles
+pynput
+python-dotenv

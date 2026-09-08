@@ -1,0 +1,749 @@
+/* Live Interview Interface Styles */
+
+:root {
+    --bg-transparency: 0.80; /* 80% opacity by default */
+    --content-transparency: 0.20; /* 80% opacity by default */
+    --code-transparency: 0.50; /* 50% opacity for better code readability */
+    --text-color: #ffffff;
+    --border-color: rgba(255, 255, 255, 0.1);
+}
+
+.live-interview-container {
+    height: 100vh;
+    width: 100vw;
+    display: flex;
+    flex-direction: column;
+    background: rgba(0, 0, 0, var(--bg-transparency));
+    color: var(--text-color);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    backdrop-filter: blur(10px);
+    overflow: hidden;
+    box-sizing: border-box;
+    position: relative;
+    pointer-events: none; /* Immune to mouse hover, clicks pass through */
+    user-select: none;
+}
+
+.live-interview-container * {
+    cursor: default !important;
+}
+
+/* Responsive breakpoints */
+@media (max-width: 768px) {
+    .live-interview-container {
+        font-size: 14px;
+    }
+}
+
+@media (max-width: 480px) {
+    .live-interview-container {
+        font-size: 12px;
+    }
+}
+
+@media (max-height: 400px) {
+    .live-interview-container {
+        font-size: 11px;
+    }
+}
+
+/* Header - Compact Disguised Telemetry Bar */
+.live-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    background: rgba(0, 0, 0, var(--content-transparency));
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+    min-height: 28px;
+    max-height: 32px;
+    box-sizing: border-box;
+}
+
+.stealth-terminal-tag {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', monospace;
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.4);
+    letter-spacing: 0.5px;
+}
+
+.live-status {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.header-controls {
+    display: flex;
+    gap: 0.35rem;
+    align-items: center;
+}
+
+.mute-btn, .reset-btn, .end-btn {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.45);
+    padding: 0.15rem 0.45rem;
+    border-radius: 3px;
+    font-size: 0.68rem;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    transition: all 0.2s ease;
+    cursor: default !important;
+}
+
+.mute-btn.muted {
+    color: rgba(255, 87, 87, 0.8);
+    border-color: rgba(255, 87, 87, 0.3);
+}
+
+.mute-btn.muted .mute-text::after {
+    content: "d";
+}
+
+/* Main Content Area */
+.interview-content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.conversation-stream {
+    flex: 1;
+    overflow-y: auto;
+    padding: clamp(0.5rem, 3vw, 2rem);
+    padding-bottom: 2rem; /* Add space at the bottom */
+    scroll-behavior: smooth;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(0.75rem, 2vw, 1.5rem);
+    box-sizing: border-box;
+}
+
+/* When conversation stream has no messages, don't let it expand */
+.conversation-stream.no-messages {
+    flex: 0;
+    min-height: 0;
+    padding: 0;
+}
+
+.conversation-stream:empty {
+    flex: 0;
+    min-height: 0;
+    padding: 0;
+}
+
+/* Ensure messages don't overflow horizontally */
+.conversation-stream > * {
+    max-width: 100%;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* Conversation Messages */
+.message {
+    margin-bottom: 0;
+    opacity: 0;
+    animation: fadeInUp 0.6s ease forwards;
+    box-sizing: border-box;
+    min-width: 0; /* Critical fix for flexbox wrapping */
+}
+
+.message:last-child {
+    margin-bottom: 0.5rem;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Interviewer Message - Compact Muted Card */
+.message.interviewer {
+    background: rgba(255, 255, 255, 0.03);
+    border-left: 2px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    padding: 0.45rem 0.75rem;
+    backdrop-filter: blur(5px);
+    margin-bottom: 0.4rem;
+}
+
+.message.interviewer .label {
+    color: rgba(255, 255, 255, 0.45);
+    font-weight: 500;
+    font-size: 0.68rem;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.2rem;
+    display: block;
+}
+
+/* AI Response Message - High Contrast Glanceable Card */
+.message.ai-response {
+    background: rgba(0, 0, 0, var(--content-transparency));
+    border-left: 2px solid #38b2ac;
+    border-radius: 4px;
+    padding: 0.6rem 0.85rem;
+    backdrop-filter: blur(5px);
+}
+
+.message.ai-response .label {
+    color: #38b2ac;
+    font-weight: 500;
+    font-size: 0.68rem;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.3rem;
+    display: block;
+}
+
+/* Streaming Text Effect - Crisp, High-Readability Font */
+.streaming-text {
+    font-size: clamp(0.85rem, 2vw, 0.96rem);
+    line-height: 1.5;
+    color: #e2e8f0;
+    word-break: break-word;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+.streaming-text .word {
+    opacity: 0;
+    animation: wordReveal 0.1s ease forwards;
+}
+
+@keyframes wordReveal {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Code Blocks */
+.message .code-block, .code-block-container {
+    margin: 0.75rem 0 !important;
+    border-radius: 6px;
+    background: #1e2128;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    max-width: 100%;
+    word-wrap: break-word;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Control spacing around code blocks - allow vertical margin */
+.message .code-block-container,
+.streaming-text .code-block-container,
+.message .code-block,
+.streaming-text .code-block {
+    margin: 0.5rem 0 !important;
+    padding: 0 !important;
+    border-radius: 4px !important;
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+}
+
+/* Control spacing from parent divs containing code blocks */
+.message div:has(.code-block-container),
+.message div:has(.code-block),
+.streaming-text div:has(.code-block-container),
+.streaming-text div:has(.code-block) {
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1.2 !important;
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+}
+
+/* Override markdown processor spacing */
+.message .markdown-paragraph:has(.code-block-container),
+.message .markdown-paragraph:has(.code-block) {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* Control spacing from adjacent elements */
+.message * + .code-block-container,
+.message * + .code-block,
+.message .code-block-container + *,
+.message .code-block + * {
+    margin-top: 0.25rem !important;
+    margin-bottom: 0.25rem !important;
+}
+
+/* Nuclear option - remove all possible spacing sources */
+.code-block-container,
+.code-block-container * {
+    box-sizing: border-box !important;
+}
+
+.message .streaming-text > .code-block-container {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+}
+
+/* Override any inherited spacing from parent elements */
+.message .streaming-text {
+    line-height: 1.6 !important;
+}
+
+.message .streaming-text > *:not(h1):not(h2):not(h3):not(h4):not(h5):not(h6) {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+
+/* Specifically target code blocks in streaming text */
+.streaming-text .code-block-container:first-child {
+    margin-top: 0 !important;
+}
+
+.streaming-text .code-block-container:last-child {
+    margin-bottom: 0 !important;
+}
+
+.code-header, .code-block-header {
+    background: rgba(255, 255, 255, 0.02);
+    padding: 0.4rem 1.25rem !important;
+    font-size: 0.65rem;
+    color: rgba(255, 255, 255, 0.5);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 0.4rem;
+    min-height: 28px;
+    max-height: 28px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.language-tag, .code-language {
+    background: none;
+    color: rgba(255, 255, 255, 0.4);
+    padding: 0;
+    border-radius: 0;
+    font-size: 0.6rem;
+    text-transform: lowercase;
+    opacity: 1;
+    white-space: nowrap;
+    font-weight: 400;
+}
+
+.copy-btn, .copy-button {
+    top:-0.8rem;
+    background: none !important;
+    border: none !important;
+    color: rgba(255, 255, 255, 0.4) !important;
+    cursor: pointer;
+    padding: 0.15rem !important;
+    border-radius: 3px !important;
+    transition: all 0.15s ease;
+    opacity: 0.8 !important;
+    font-size: 0.65rem !important;
+    font-weight: 400;
+    line-height: 1;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    height: 16px !important;
+    width: 20px !important;
+    min-width: 20px !important;
+    max-width: 20px !important;
+}
+
+.copy-btn:hover, .copy-button:hover {
+    opacity: 1 !important;
+    color: rgba(255, 255, 255, 0.7) !important;
+    background: rgba(255, 255, 255, 0.05) !important;
+}
+
+.code-block pre, .code-block-container pre {
+    margin: 0 !important;
+    padding: 1rem 1.25rem !important;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    background: transparent !important;
+    color: #e2e8f0;
+    border: none;
+    
+    /* Ensure code wraps correctly and is responsive */
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    max-width: 100%;
+    overflow-x: hidden;
+    box-sizing: border-box;
+    
+    /* Better responsive wrapping */
+    word-spacing: normal;
+    letter-spacing: normal;
+}
+
+.code-block pre code, .code-block-container pre code {
+    background: none !important;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    /* Ensure wrapping on the code tag itself */
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+/* Complexity Analysis */
+.complexity-analysis {
+    background: rgba(255, 193, 7, 0.1);
+    border: 1px solid rgba(255, 193, 7, 0.3);
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1rem 0;
+}
+
+.complexity-analysis .title {
+    color: #ffc107;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.complexity-item {
+    display: flex;
+    justify-content: space-between;
+    margin: 0.25rem 0;
+    font-size: 0.9rem;
+}
+
+.complexity-value {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    background: rgba(255, 193, 7, 0.2);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+}
+
+/* Activity Indicator - Stealthy Micro Status */
+.activity-indicator {
+    position: absolute;
+    bottom: 0.4rem;
+    right: 0.75rem;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(5px);
+    border-radius: 4px;
+    padding: 0.15rem 0.5rem;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    pointer-events: none;
+}
+
+.activity-indicator.show {
+    opacity: 0.85;
+}
+
+.listening-state {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 0.65rem;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.stealth-indicator-dot {
+    width: 5px;
+    height: 5px;
+    background: #38b2ac;
+    border-radius: 50%;
+    opacity: 0.8;
+}
+
+.stealth-indicator-text {
+    text-transform: lowercase;
+    letter-spacing: 0.5px;
+}
+
+/* Scrollbar Styling */
+.conversation-stream::-webkit-scrollbar {
+    width: 4px;
+}
+
+.conversation-stream::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.conversation-stream::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 2px;
+}
+
+.conversation-stream::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.4);
+}
+
+/* Enhanced Responsive Design */
+@media (max-width: 768px) {
+    .activity-indicator {
+        bottom: 1rem;
+        padding: 0.5rem 1rem;
+        font-size: 0.8rem;
+    }
+    
+    .code-header, .code-block-header {
+        padding: 0.2rem 0.4rem;
+        font-size: 0.6rem;
+        min-height: 20px;
+        max-height: 20px;
+    }
+    
+    .code-block pre, .code-block-container pre {
+        padding: 0.75rem 1rem !important;
+        font-size: 0.75rem;
+        line-height: 1.4;
+    }
+    
+    .copy-btn, .copy-button {
+        height: 14px !important;
+        width: 18px !important;
+        min-width: 18px !important;
+        max-width: 18px !important;
+        font-size: 0.6rem !important;
+    }
+    
+    .language-tag, .code-language {
+        font-size: 0.55rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .activity-indicator {
+        bottom: 0.5rem;
+        left: 1rem;
+        right: 1rem;
+        transform: none;
+        max-width: calc(100vw - 2rem);
+    }
+    
+    .end-btn {
+        padding: 0.4rem 0.8rem;
+        font-size: 0.8rem;
+    }
+}
+
+@media (max-height: 500px) {
+    .live-header {
+        min-height: 50px;
+        padding: 0.5rem;
+    }
+    
+    .conversation-stream {
+        padding: 0.5rem;
+    }
+    
+    .message:last-child {
+        margin-bottom: 3rem;
+    }
+}
+
+/* Text Selection */
+::selection {
+    background: rgba(0, 212, 255, 0.3);
+}
+
+/* Enhanced animations for better UX */
+.message.interviewer .streaming-text {
+    border-right: 2px solid var(--text-color);
+    animation: typing 0.5s steps(1) infinite;
+    opacity: 0.8;
+}
+
+.message.ai-response .streaming-text {
+    border-right: 2px solid var(--text-color);
+    animation: typing 0.5s steps(1) infinite;
+    opacity: 0.8;
+}
+
+.message.complete .streaming-text {
+    border-right: none;
+    animation: none;
+    opacity: 1;
+}
+
+/* Hide cursor for interim messages being updated rapidly */
+.message.interim .streaming-text {
+    border-right: none;
+    animation: none;
+    opacity: 0.7;
+}
+
+@keyframes typing {
+    50% { border-color: transparent; }
+}
+
+/* Special styling for approach headers */
+.approach-header {
+    background: rgba(100, 210, 255, 0.1);
+    border-left: 3px solid #64d2ff;
+    padding: 0.5rem 1rem;
+    margin: 1rem 0 0.5rem 0;
+    border-radius: 0 6px 6px 0;
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+/* Question highlight */
+.question-highlight {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    font-weight: 500;
+}
+
+/* Heading spacing fixes */
+.message h1, .message h2, .message h3, .message h4, .message h5, .message h6,
+.streaming-text h1, .streaming-text h2, .streaming-text h3, .streaming-text h4, .streaming-text h5, .streaming-text h6 {
+    margin-top: 1rem !important;
+    margin-bottom: 0.6rem !important;
+    line-height: 1.3;
+    font-weight: 600;
+}
+
+/* First heading in a message should have less top margin */
+.message h1:first-child, .message h2:first-child, .message h3:first-child, 
+.message h4:first-child, .message h5:first-child, .message h6:first-child,
+.streaming-text h1:first-child, .streaming-text h2:first-child, .streaming-text h3:first-child,
+.streaming-text h4:first-child, .streaming-text h5:first-child, .streaming-text h6:first-child {
+    margin-top: 0.3rem !important;
+}
+
+/* Last heading in a message should have less bottom margin */
+.message h1:last-child, .message h2:last-child, .message h3:last-child,
+.message h4:last-child, .message h5:last-child, .message h6:last-child,
+.streaming-text h1:last-child, .streaming-text h2:last-child, .streaming-text h3:last-child,
+.streaming-text h4:last-child, .streaming-text h5:last-child, .streaming-text h6:last-child {
+    margin-bottom: 0.3rem !important;
+}
+
+/* Specific heading sizes and spacing */
+.message h1, .streaming-text h1 {
+    font-size: 1.5rem;
+    margin-top: 1.3rem !important;
+    margin-bottom: 0.7rem !important;
+}
+
+.message h2, .streaming-text h2 {
+    font-size: 1.3rem;
+    margin-top: 1.2rem !important;
+    margin-bottom: 0.6rem !important;
+}
+
+.message h3, .streaming-text h3 {
+    font-size: 1.1rem;
+    margin-top: 1rem !important;
+    margin-bottom: 0.5rem !important;
+}
+
+.message h4, .streaming-text h4 {
+    font-size: 1rem;
+    margin-top: 0.9rem !important;
+    margin-bottom: 0.4rem !important;
+}
+
+.message h5, .streaming-text h5 {
+    font-size: 0.95rem;
+    margin-top: 0.8rem !important;
+    margin-bottom: 0.4rem !important;
+}
+
+.message h6, .streaming-text h6 {
+    font-size: 0.9rem;
+    margin-top: 0.7rem !important;
+    margin-bottom: 0.3rem !important;
+}
+
+/* Responsive heading adjustments */
+@media (max-width: 768px) {
+    .message h1, .streaming-text h1 {
+        font-size: 1.3rem;
+        margin-top: 1.5rem !important;
+        margin-bottom: 1rem !important;
+    }
+    
+    .message h2, .streaming-text h2 {
+        font-size: 1.2rem;
+        margin-top: 1.3rem !important;
+        margin-bottom: 0.8rem !important;
+    }
+    
+    .message h3, .streaming-text h3 {
+        font-size: 1.05rem;
+        margin-top: 1.2rem !important;
+        margin-bottom: 0.7rem !important;
+    }
+}
+
+@media (max-width: 480px) {
+    .message h1, .streaming-text h1 {
+        font-size: 1.2rem;
+        margin-top: 1.2rem !important;
+        margin-bottom: 0.8rem !important;
+    }
+    
+    .message h2, .streaming-text h2 {
+        font-size: 1.1rem;
+        margin-top: 1rem !important;
+        margin-bottom: 0.7rem !important;
+    }
+    
+    .message h3, .streaming-text h3 {
+        font-size: 1rem;
+        margin-top: 1rem !important;
+        margin-bottom: 0.6rem !important;
+    }
+}
+
+/* Additional spacing for content around headings */
+.message p, .streaming-text p {
+    margin: 0.5rem 0 !important;
+    line-height: 1.6;
+}
+
+.message ul, .message ol, .streaming-text ul, .streaming-text ol {
+    margin: 0.5rem 0 !important;
+    padding-left: 1.5rem;
+}
+
+.message li, .streaming-text li {
+    margin: 0.2rem 0 !important;
+    line-height: 1.5;
+}
+
+/* Ensure proper spacing between headings and adjacent content */
+.message h1 + p, .message h2 + p, .message h3 + p, .message h4 + p, .message h5 + p, .message h6 + p,
+.streaming-text h1 + p, .streaming-text h2 + p, .streaming-text h3 + p, .streaming-text h4 + p, .streaming-text h5 + p, .streaming-text h6 + p {
+    margin-top: 0 !important;
+}
+
+.message p + h1, .message p + h2, .message p + h3, .message p + h4, .message p + h5, .message p + h6,
+.streaming-text p + h1, .streaming-text p + h2, .streaming-text p + h3, .streaming-text p + h4, .streaming-text p + h5, .streaming-text p + h6 {
+    margin-top: 1.3rem !important;
+}
+
+/* Stealth Mode: Suppress all floating hints, popups, and banners */
+#transparency-hint,
+#transparency-feedback,
+#capture-notification,
+.preset-notification,
+.hotkey-hint {
+    display: none !important;
+} 

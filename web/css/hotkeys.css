@@ -1,0 +1,145 @@
+/* Hotkey UI Styles */
+
+#transparency-hint {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 10000;
+    pointer-events: none;
+    animation: fadeInSlide 0.3s ease-out;
+}
+
+.hotkey-hint {
+    background: rgba(0, 0, 0, 0.9);
+    color: white;
+    padding: 1rem 1.5rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(10px);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    min-width: 250px;
+}
+
+.hint-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    color: #00d4ff;
+}
+
+.hint-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.8rem;
+}
+
+.hint-key {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.75rem;
+    margin-right: 0.5rem;
+    color: #ffc107;
+}
+
+.hint-level {
+    font-size: 0.8rem;
+    color: #a0aec0;
+    text-align: center;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#transparency-feedback {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 10000;
+    pointer-events: none;
+    animation: fadeInSlide 0.3s ease-out;
+}
+
+.transparency-feedback {
+    background: rgba(0, 0, 0, 0.9);
+    color: white;
+    padding: 1rem 1.5rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(10px);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    text-align: center;
+    min-width: 150px;
+}
+
+.transparency-bar {
+    display: flex;
+    justify-content: center;
+    gap: 0.3rem;
+    margin-top: 0.5rem;
+    font-size: 1.2rem;
+}
+
+.bar-segment {
+    transition: all 0.2s ease;
+    opacity: 0.4;
+}
+
+.bar-segment.active {
+    opacity: 1;
+    color: #00d4ff;
+    transform: scale(1.2);
+}
+
+.mute-status {
+    font-size: 0.8rem;
+    opacity: 0.8;
+    margin-top: 0.25rem;
+    color: #a0aec0;
+}
+
+@keyframes fadeInSlide {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    #transparency-hint,
+    #transparency-feedback {
+        right: 10px;
+        left: 10px;
+        max-width: calc(100vw - 20px);
+    }
+    
+    .hotkey-hint {
+        padding: 0.75rem 1rem;
+        min-width: auto;
+    }
+    
+    .hint-controls {
+        font-size: 0.75rem;
+    }
+    
+    .hint-key {
+        font-size: 0.7rem;
+    }
+}
+
+@media (max-height: 500px) {
+    #transparency-hint {
+        top: 10px;
+    }
+    
+    #transparency-feedback {
+        bottom: 10px;
+    }
+} 

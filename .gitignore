@@ -1,0 +1,18 @@
+# --- Environment ---
+.env
+.venv/
+venv/
+
+# --- Python ---
+__pycache__/
+*.pyc
+
+# --- VSCode ---
+.vscode/
+
+# --- Build artifacts ---
+dist/
+build/
+*.spec
+# AI Provider configuration file with secret keys
+ai_providers.json
