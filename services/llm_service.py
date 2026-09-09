@@ -98,9 +98,6 @@ class LLMManager:
                 "model": self.model_name
             }
         
-        # Add question to conversation history (once, before retry loop)
-        self.context_manager.add_conversation_exchange(question)
-        
         # Dynamically reload prompts to ensure any prompt updates take effect immediately
         import importlib
         import core.prompts as prompts_module
@@ -135,7 +132,7 @@ class LLMManager:
                     "model": self.model_name,
                     "temperature": 0.3,
                     "top_p": 0.85,
-                    "max_tokens": 8000
+                    "max_tokens": 4096
                 }
 
                 # Add provider-specific routing if available
@@ -182,8 +179,9 @@ class LLMManager:
                     )
                     answer = chat_completion.choices[0].message.content.strip()
                 
-                # Success! Add AI response and return
-                self.context_manager.add_ai_response(answer, "normal")
+                # Success! Add completed conversation exchange and return
+                if self.context_manager:
+                    self.context_manager.add_conversation_exchange(interviewer_question=question, ai_response=answer)
                 self.is_healthy = True
                 self.error_count = 0
                 self.last_success_time = datetime.now()
@@ -457,14 +455,14 @@ class MultiLLMManager:
             
             print(f"⚠️ Active provider {self.active_preset_key} failed, attempting fallback...")
         
-        # Try fallback providers (disable streaming for fallback to avoid confusion)
+        # Try fallback providers
         for fallback_preset in self.fallback_order:
             if fallback_preset != self.active_preset_key and fallback_preset in self.providers:
                 print(f"🔄 Attempting fallback to {fallback_preset}...")
                 
                 manager = self.providers[fallback_preset]
-                # Don't use streaming for fallback
-                answer, result_info = await manager.get_ai_answer(question, None)
+                # Pass stream_callback so fallback streams directly to frontend HUD
+                answer, result_info = await manager.get_ai_answer(question, stream_callback)
                 
                 if result_info.get("success"):
                     # Update active preset to the working one

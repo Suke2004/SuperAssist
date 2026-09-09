@@ -278,6 +278,12 @@ export class WebSocketHandler {
         if (window.presetManager) {
             presetManager.showErrorNotification(payload.message);
         }
+        if (window.liveInterviewUI && liveInterviewUI.currentStreamingElement) {
+            liveInterviewUI.finalizeStreamingResponse({
+                error: payload.message || "Error processing request",
+                success: false
+            });
+        }
     }
 
     sendMessage(type, payload) {
@@ -331,7 +337,7 @@ export class WebSocketHandler {
             onboardingData: { ...state.onboardingData, selectedLanguages: state.selectedLanguages },
             is_muted: initialMuteStatus.microphone,
             is_universally_muted: initialMuteStatus.universal,
-            process_all_speakers: false,
+            process_all_speakers: true,
             aiSecondaryProvider: state.selectedSecondaryProvider.name ? {
                 provider: state.selectedSecondaryProvider.name,
                 model: state.selectedSecondaryProvider.model

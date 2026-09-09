@@ -1103,7 +1103,33 @@ class LiveInterviewUI {
             if (!metadata.forceFinalize && this.currentStreamingContent) {
                 // Finalize the markdown parser to process any remaining content
                 // The markdown parser already handles thinking content filtering
-                const finalContent = this.markdownParser.finalize();
+                let finalContent = this.markdownParser.finalize();
+
+                // FALLBACK: If streaming buffer yielded empty content (e.g. non-streamed fallback provider,
+                // dropped socket chunks, or prompt direct answer), check if metadata.answer is present.
+                if ((!finalContent || !finalContent.trim()) && metadata.answer) {
+                    console.log('🔄 Streaming buffer was empty; rendering complete response from metadata.answer');
+                    const filteredAnswer = this.filterThinkingContent(metadata.answer);
+                    if (this.markdownParser && this.markdownParser.markdownProcessor) {
+                        const blocks = this.markdownParser.markdownProcessor.parseContent(filteredAnswer);
+                        let renderedHTML = '';
+                        blocks.forEach(block => {
+                            const blockHTML = this.markdownParser.markdownProcessor.generateHTML(block);
+                            if (blockHTML !== null) {
+                                renderedHTML += blockHTML;
+                            } else if (block.type === 'code') {
+                                renderedHTML += this.markdownParser.generateCodeBlockHTML(block);
+                            }
+                        });
+                        finalContent = renderedHTML;
+                    } else {
+                        finalContent = `<p>${filteredAnswer}</p>`;
+                    }
+                } else if ((!finalContent || !finalContent.trim()) && (metadata.error || metadata.success === false)) {
+                    const errDetail = metadata.error || 'AI response failed to generate. Check provider credentials.';
+                    finalContent = `<p style="color: #ef4444; font-size: 0.9em; margin: 0; padding: 4px 0;">⚠️ // ${errDetail}</p>`;
+                }
+
                 this.currentStreamingContent.innerHTML = finalContent;
                 console.log('📝 Real-time markdown parsing finalized with thinking content filtering');
             } else if (metadata.forceFinalize) {

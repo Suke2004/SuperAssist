@@ -389,7 +389,7 @@ For EACH MCQ identified:
 - **The Bottleneck:** [Where redundant work happens: e.g. repeatedly re-scanning elements, causing Time Limit Exceeded (TLE) for large N]
 
 ```{lang_tag}
-// Complete, working Brute Force implementation in {primary_language}
+// Complete, working Brute Force implementation in {primary_language}, with minal comments explaining the key steps of algorithm
 ```
 
 ### ⚡ 3. Optimal Solution ([Core Pattern / Technique Name])
@@ -401,11 +401,21 @@ For EACH MCQ identified:
 - **Complexity:** **Time:** O(...) — [step-by-step rationale] | **Space:** O(...) — [auxiliary memory breakdown]
 
 ```{lang_tag}
-// Complete, production-grade Optimal implementation in {primary_language}
+// Complete, production-grade Optimal implementation in {primary_language}, with minal comments explaining the key steps of algorithm
 // Clean variable names, idiomatic style, robust edge-case handling
 ```
 
-### 🧪 4. Dry Run on Given Test Cases
+###  4. Key data structures or key named algorithms
+* list out the key data structures or key named algorithms used in the optimal solution:*
+
+- **Key Data Structures:**
+  1. [Data Structure 1]: [Why it is used, its properties, and how it helps optimize the solution]
+  2. [Data Structure 2]: [Why it is used, its properties, and how it helps optimize the solution]
+- **Key Named Algorithms:**
+  1. [Algorithm 1]: [Why it is used, its properties, and how it helps optimize the solution]
+  2. [Algorithm 2]: [Why it is used, its properties, and how it helps optimize the solution]
+
+### 🧪 5. Dry Run on Given Test Cases
 *Trace through a concrete example step-by-step showing how pointers/variables evolve:*
 - **Input Example:** `[e.g. nums = [2, 7, 11, 15], target = 9]`
 - **Step-by-Step Execution:**
@@ -413,7 +423,7 @@ For EACH MCQ identified:
   - **Step 2:** [Next index/element, state of data structure, check condition -> outcome]
 - **Final Output:** `[e.g. [0, 1]]`
 
-### 🔍 5. Edge Cases & Interview Follow-ups
+### 🔍 6. Edge Cases & Interview Follow-ups
 - **Edge Cases Handled:** [e.g. Empty array, single element, duplicates, negative numbers, extreme values]
 - **Follow-up / Scaling:** [1-2 sentences on how to handle streaming data or inputs larger than RAM]
 

@@ -26,7 +26,7 @@ class InterviewSession:
         self.is_active: bool = False
         self.state: Dict[str, any] = {
             "is_muted": False,
-            "process_all_speakers": False,
+            "process_all_speakers": True,
             "is_universally_muted": False
         }
         self.transcript_buffer: str = ""
@@ -64,7 +64,7 @@ class InterviewSession:
             onboarding_context = payload.get('onboardingData', {})
             
             self.state["is_muted"] = payload.get('is_muted', False)
-            self.state["process_all_speakers"] = payload.get('process_all_speakers', False)
+            self.state["process_all_speakers"] = payload.get('process_all_speakers', True)
             self.state["is_universally_muted"] = payload.get('is_universally_muted', False)
 
             await self.initialize_managers(primary_provider_config, secondary_provider_config, primary_vision_config, secondary_vision_config, onboarding_context)
@@ -140,7 +140,11 @@ class InterviewSession:
                 if self.silence_timer:
                     self.silence_timer.cancel()
                     self.silence_timer = None
-                self.transcript_buffer = ""
+                # User just muted the mic! If speech was buffered while speaking,
+                # muting is the ultimate signal that speaking has finished — trigger immediate answer generation!
+                if self.transcript_buffer and self.transcript_buffer.strip():
+                    print(f"🎤 Session {self.session_id}: Mic muted with buffered speech -> processing immediately: '{self.transcript_buffer.strip()}'")
+                    asyncio.create_task(self._process_aggregated_transcript())
             print(f"🎤 Session {self.session_id}: Microphone mute state updated to {self.state['is_muted']}")
         await self._send_json("config_updated", self.state)
 
@@ -268,11 +272,6 @@ class InterviewSession:
             self.transcript_buffer = ""
             return
 
-        # Abort immediately if microphone is muted and candidate was the speaker
-        if self.state.get("is_muted") and self.state.get("last_speaker_hint") == "microphone":
-            self.transcript_buffer = ""
-            return
-
         transcript = self.transcript_buffer
         self.transcript_buffer = ""
         
@@ -315,9 +314,19 @@ class InterviewSession:
         if is_candidate_speech and self.state.get("is_muted"):
             return
 
-        # If candidate speech and process_all_speakers is disabled, treat as candidate answer context, not question
-        if is_candidate_speech and not self.state.get("process_all_speakers", False):
-            should_process = False
+        # If candidate speech and process_all_speakers is explicitly disabled, treat as candidate answer context,
+        # unless it is an explicit question or prompt directed at the copilot
+        if is_candidate_speech and not self.state.get("process_all_speakers", True):
+            prompt_triggers = (
+                "can you", "could you", "how do", "how would", "what is", "what are",
+                "explain", "solve", "dry run", "give me", "write a", "code this",
+                "tell me", "why does", "walk through", "help me", "what if", "show me"
+            )
+            lower_transcript = transcript.lower()
+            if transcript.endswith('?') or any(lower_transcript.startswith(pt) or f" {pt}" in lower_transcript for pt in prompt_triggers):
+                should_process = True
+            else:
+                should_process = False
         else:
             should_process = True
 
@@ -326,15 +335,15 @@ class InterviewSession:
                 self.transcript_buffer = (self.transcript_buffer + " " + transcript).strip()
                 
                 # Adaptive silence threshold:
-                # If question ends with '?', interviewer has finished asking - answer immediately (600ms)
-                # If statement ends with '.' or '!', wait 800ms
-                # Otherwise (mid-sentence pause), wait 1200ms
+                # If question ends with '?', interviewer has finished asking - answer immediately (500ms)
+                # If statement ends with '.' or '!', wait 700ms
+                # Otherwise (mid-sentence pause), wait 1000ms
                 if transcript.endswith('?'):
-                    silence_wait = 0.6
+                    silence_wait = 0.5
                 elif transcript.endswith('.') or transcript.endswith('!'):
-                    silence_wait = 0.8
+                    silence_wait = 0.7
                 else:
-                    silence_wait = 1.2
+                    silence_wait = 1.0
 
                 if self.silence_timer:
                     self.silence_timer.cancel()
@@ -348,9 +357,15 @@ class InterviewSession:
                 if self.llm_manager:
                     self.llm_manager.process_candidate_response(transcript)
         else:
-            # Interim result: if interviewer is still speaking, push back silence timer
-            if should_process and self.silence_timer:
-                self.silence_timer.cancel()
+            # Interim result: if still speaking, push back silence timer so it doesn't fire prematurely
+            # but still fires shortly after pause
+            if should_process and self.transcript_buffer:
+                if self.silence_timer:
+                    self.silence_timer.cancel()
+                async def delayed_processing(wait_time):
+                    await asyncio.sleep(wait_time)
+                    await self._process_aggregated_transcript()
+                self.silence_timer = asyncio.create_task(delayed_processing(1.0))
 
     async def cleanup(self):
         """Cleans up resources for the session."""

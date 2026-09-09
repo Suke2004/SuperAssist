@@ -56,30 +56,39 @@ class PersistentContextManager:
         self.is_initialized = True
         print(f"✅ Persistent context initialized with full resume ({len(self.persistent_context['complete_resume'])} chars), languages: {languages}")
     
-    def add_conversation_exchange(self, interviewer_question: str, candidate_response: str = None, ai_response: str = None):
-        """Add conversation exchange - limited to MAX_CONVERSATION_HISTORY most recent"""
+    def add_conversation_exchange(self, interviewer_question: str = None, candidate_response: str = None, ai_response: str = None):
+        """Add conversation exchange - deduplicating questions and limited to MAX_CONVERSATION_HISTORY most recent"""
         
         # Filter thinking content from AI response
         filtered_ai_response = filter_thinking_content(ai_response) if ai_response else ai_response
         
+        # If we are only getting an AI response, update the last exchange.
+        if interviewer_question is None and ai_response and self.conversation_history:
+            self.conversation_history[-1]['ai_response'] = filtered_ai_response
+            return
+        # If we are only getting a candidate response, add it to the last exchange.
+        elif interviewer_question is None and candidate_response and self.conversation_history:
+            self.conversation_history[-1]['candidate_response'] = candidate_response
+            return
+        
+        # If the last exchange was for the EXACT SAME question (e.g. retry or fallback), update it instead of duplicating
+        if interviewer_question and self.conversation_history and self.conversation_history[-1].get('interviewer_question') == interviewer_question:
+            if candidate_response:
+                self.conversation_history[-1]['candidate_response'] = candidate_response
+            if filtered_ai_response:
+                self.conversation_history[-1]['ai_response'] = filtered_ai_response
+            return
+
         exchange = {
             'interviewer_question': interviewer_question,
             'candidate_response': candidate_response,
             'ai_response': filtered_ai_response,
             'timestamp': datetime.now().isoformat()
         }
-        
-        # If we are only getting a candidate response, add it to the last exchange.
-        if interviewer_question is None and candidate_response and self.conversation_history:
-            self.conversation_history[-1]['candidate_response'] = candidate_response
-        # If we are only getting an AI response, add it to the last exchange.
-        elif interviewer_question is None and ai_response and self.conversation_history:
-            self.conversation_history[-1]['ai_response'] = filtered_ai_response
-        else:
-            self.conversation_history.append(exchange)
+        self.conversation_history.append(exchange)
 
         # Keep only last MAX_CONVERSATION_HISTORY exchanges
-        max_history = settings.MAX_CONVERSATION_HISTORY
+        max_history = getattr(settings, 'MAX_CONVERSATION_HISTORY', 5) or 5
         if len(self.conversation_history) > max_history:
             self.conversation_history = self.conversation_history[-max_history:]
     
@@ -182,8 +191,12 @@ class PersistentContextManager:
         return 'python'
 
     def ensure_context_available(self) -> bool:
-        """Verify persistent context is properly initialized"""
-        return self.is_initialized and bool(self.persistent_context.get('candidate_name'))
+        """Verify persistent context is available, defaulting gracefully if not explicitly initialized."""
+        if not self.is_initialized:
+            self.is_initialized = True
+        if not self.persistent_context.get('candidate_name'):
+            self.persistent_context['candidate_name'] = 'Candidate'
+        return True
 
     def reset_conversation_history(self):
         """Resets the conversation history."""
