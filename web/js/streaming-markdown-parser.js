@@ -62,6 +62,8 @@ export class StreamingMarkdownParser {
         // Reprocess if we detect completed markdown elements
         if (
             this.patterns.headerComplete.test(newContent) ||         // Complete header
+            newContent.includes('```') ||                            // Code block boundary
+            newContent.includes('~~~') ||                            // Code block boundary
             this.patterns.codeBlockBoundary.test(newContent) ||      // Code block boundary
             this.patterns.paragraphBreak.test(newContent) ||         // Paragraph break
             this.patterns.inlineComplete.test(newContent) ||         // Complete inline formatting
@@ -70,6 +72,7 @@ export class StreamingMarkdownParser {
             newContent.includes('\n1. ') ||                         // Numbered list
             newContent.includes('**') ||                            // Bold formatting
             newContent.includes('`') ||                             // Code formatting
+            newContent.includes('$') ||                             // Math notation
             newContent.includes('[') ||                             // Link start
             newContent.includes('](')                               // Link completion
         ) {
@@ -130,29 +133,39 @@ export class StreamingMarkdownParser {
         let content = this.buffer;
         
         // Don't process if we're potentially in the middle of a code block
-        const codeBlockMatches = content.match(/```/g);
-        if (codeBlockMatches && codeBlockMatches.length % 2 === 1) {
-            // Odd number of ``` means we're inside a code block
-            const lastCodeBlock = content.lastIndexOf('```');
-            content = content.substring(0, lastCodeBlock);
+        const codeFences = content.match(/```|~~~/g);
+        if (codeFences && codeFences.length % 2 === 1) {
+            // Odd number of fences means we're inside a code block
+            const lastFence = Math.max(content.lastIndexOf('```'), content.lastIndexOf('~~~'));
+            content = content.substring(0, lastFence);
         }
         
-        // Don't process incomplete inline formatting
-        const lastAsterisk = content.lastIndexOf('**');
-        const lastBacktick = content.lastIndexOf('`');
+        // Only truncate incomplete inline formatting when there is an unclosed opener (odd count)
+        const boldMatches = content.match(/\*\*|__/g);
+        if (boldMatches && boldMatches.length % 2 === 1) {
+            const lastMarker = Math.max(content.lastIndexOf('**'), content.lastIndexOf('__'));
+            if (lastMarker > -1) {
+                content = content.substring(0, lastMarker);
+            }
+        }
+        
+        // Check single unclosed inline code backtick (ignore triple backticks in code blocks)
+        const textWithoutFences = content.replace(/(?:```|~~~)[^`~]*?(?:```|~~~)/g, '');
+        const singleBacktickMatches = textWithoutFences.match(/`/g);
+        if (singleBacktickMatches && singleBacktickMatches.length % 2 === 1) {
+            const lastBacktick = content.lastIndexOf('`');
+            if (lastBacktick > -1) {
+                content = content.substring(0, lastBacktick);
+            }
+        }
+        
+        // Truncate incomplete links [text](url...
         const lastBracket = content.lastIndexOf('[');
-        
-        // If there's an opening marker without a close, truncate
-        if (lastAsterisk > -1 && !content.slice(lastAsterisk + 2).includes('**')) {
-            content = content.substring(0, lastAsterisk);
-        }
-        
-        if (lastBacktick > -1 && !content.slice(lastBacktick + 1).includes('`')) {
-            content = content.substring(0, lastBacktick);
-        }
-        
-        if (lastBracket > -1 && !content.slice(lastBracket).includes('](')) {
-            content = content.substring(0, lastBracket);
+        if (lastBracket > -1) {
+            const afterBracket = content.slice(lastBracket);
+            if (!afterBracket.includes('](') || (!afterBracket.includes(')') && afterBracket.includes(']('))) {
+                content = content.substring(0, lastBracket);
+            }
         }
         
         // Filter thinking content AFTER determining safe content boundaries
@@ -192,6 +205,7 @@ export class StreamingMarkdownParser {
      */
     generateCodeBlockHTML(block) {
         const language = block.language || 'javascript';
+        const normLang = this.markdownProcessor.normalizeLanguage(language);
         const content = this.escapeHtml(block.content);
         const blockId = `code-block-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         
@@ -199,7 +213,7 @@ export class StreamingMarkdownParser {
         this.codeBlockSources.set(blockId, block.content);
 
         // Generate code block with proper padding and spacing
-        const html = `<div class="code-block-container" data-block-id="${blockId}" style="margin:0.75rem 0!important;padding:0!important;max-width:100%!important;overflow-x:hidden!important;word-wrap:break-word!important;border-radius:6px!important;"><div class="code-block-header" style="padding:0.4rem 1.25rem!important;"><span class="code-language">${language}</span><button class="copy-button" type="button">📋</button></div><pre class="code-block language-${language}" style="padding:1rem 1.25rem!important;margin:0!important;"><code class="language-${language}">${content}</code></pre></div>`;
+        const html = `<div class="code-block-container" data-block-id="${blockId}" style="margin:0.75rem 0!important;padding:0!important;max-width:100%!important;overflow-x:hidden!important;word-wrap:break-word!important;border-radius:6px!important;"><div class="code-block-header" style="padding:0.4rem 1.25rem!important;"><span class="code-language">${this.escapeHtml(language)}</span><button class="copy-button" type="button">📋</button></div><pre class="code-block language-${normLang}" style="padding:1rem 1.25rem!important;margin:0!important;"><code class="language-${normLang}">${content}</code></pre></div>`;
 
         // Schedule syntax highlighting and copy-button wiring for this block
         setTimeout(() => {

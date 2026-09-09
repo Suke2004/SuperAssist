@@ -17,33 +17,40 @@ export class MarkdownProcessor {
         };
         
         // Regex patterns for markdown elements
+        // Regex patterns for markdown elements
         this.patterns = {
-            // Code blocks (highest priority - must be preserved)
-            codeBlock: /```(\w+)?\n([\s\S]*?)```/g,
+            // Code blocks (highest priority - must be preserved, supports c++, c#, etc.)
+            codeBlock: /(?:```|~~~)([a-zA-Z0-9_+#.-]+)?[^\S\r\n]*\r?\n([\s\S]*?)\r?\n?[^\S\r\n]*(?:```|~~~)/g,
             
+            // Display math ($$...$$)
+            displayMath: /\$\$([\s\S]+?)\$\$/g,
+
+            // Inline math ($...$, e.g. $O(N)$, $O(1)$, $n$)
+            inlineMath: /(^|[^\\])\$([a-zA-Z0-9_\\{}[\]^+\-*\/=<>(),. ]+?)\$/g,
+
             // Headers
-            header: /^(#{1,6})\s+(.+)$/gm,
+            header: /^(#{1,6})\s+(.+)$/m,
             
-            // Tables - detect table rows
-            tableRow: /^\|(.+)\|$/gm,
-            tableSeparator: /^\|[\s]*:?-+:?[\s]*(\|[\s]*:?-+:?[\s]*)*\|$/gm,
+            // Tables - detect table rows (no /g flag to avoid lastIndex state bugs)
+            tableRow: /^\|(.+)\|$/m,
+            tableSeparator: /^\|[\s]*:?-+:?[\s]*(\|[\s]*:?-+:?[\s]*)*\|$/m,
             
             // Lists
-            bulletList: /^(\s*)([-*+])\s+(.+)$/gm,
-            numberedList: /^(\s*)(\d+\.)\s+(.+)$/gm,
-            taskList: /^(\s*)([-*+])\s+\[([ xX])\]\s+(.+)$/gm,
+            bulletList: /^(\s*)([-*+])\s+(.+)$/m,
+            numberedList: /^(\s*)(\d+\.)\s+(.+)$/m,
+            taskList: /^(\s*)([-*+])\s+\[([ xX])\]\s+(.+)$/m,
             
             // Blockquotes
-            blockquote: /^>\s*(.+)$/gm,
+            blockquote: /^>\s*(.+)$/m,
             
-            // Horizontal rules
-            horizontalRule: /^(\*{3,}|-{3,}|_{3,})$/gm,
+            // Horizontal rules (no /g flag to avoid lastIndex state bugs)
+            horizontalRule: /^(\*{3,}|-{3,}|_{3,})$/m,
             
             // Inline formatting
-            bold: /\*\*(.*?)\*\*/g,
-            italic: /\*(.*?)\*/g,
+            bold: /\*\*([^*]+)\*\*|__([^_]+)__/g,
+            italic: /(?:^|[^*])\*([^*]+)\*(?!\*)|(?:^|[^_])_([^_]+)_(?!_)/g,
             strikethrough: /~~(.*?)~~/g,
-            inlineCode: /`([^`]+)`/g,
+            inlineCode: /`([^`\r\n]+)`/g,
             links: /\[([^\]]+)\]\(([^)]+)\)/g,
             images: /!\[([^\]]*)\]\(([^)]+)\)/g,
             
@@ -91,23 +98,39 @@ export class MarkdownProcessor {
      */
     extractCodeBlocks(text) {
         const codeBlocks = [];
-        let match;
         
         // Reset regex to avoid issues with global flag
         this.patterns.codeBlock.lastIndex = 0;
         
-        const textWithPlaceholders = text.replace(this.patterns.codeBlock, (match, language, code) => {
+        let textWithPlaceholders = text.replace(this.patterns.codeBlock, (match, language, code) => {
             const id = `__CODE_BLOCK_${codeBlocks.length}__`;
             codeBlocks.push({
                 id,
                 type: 'code',
-                language: language || 'javascript',
-                content: code.trim(),
+                language: (language || 'javascript').trim(),
+                content: code.replace(/^\r?\n/, '').replace(/\r?\n$/, ''),
                 originalMatch: match
             });
-            return `\n${id}\n`;
+            return `\n\n${id}\n\n`;
         });
         
+        // Handle edge case: unclosed code block at end of text (e.g. streaming or truncated output)
+        const unclosedFenceMatch = textWithPlaceholders.match(/(?:^|\n)[^\S\r\n]*(?:```|~~~)([a-zA-Z0-9_+#.-]+)?[^\S\r\n]*\r?\n([\s\S]*)$/);
+        if (unclosedFenceMatch) {
+            const fullMatch = unclosedFenceMatch[0];
+            const language = unclosedFenceMatch[1];
+            const code = unclosedFenceMatch[2];
+            const id = `__CODE_BLOCK_${codeBlocks.length}__`;
+            codeBlocks.push({
+                id,
+                type: 'code',
+                language: (language || 'javascript').trim(),
+                content: code.replace(/^\r?\n/, '').replace(/\r?\n$/, ''),
+                originalMatch: fullMatch
+            });
+            textWithPlaceholders = textWithPlaceholders.substring(0, textWithPlaceholders.length - fullMatch.length) + `\n\n${id}\n\n`;
+        }
+
         return { textWithPlaceholders, codeBlocks };
     }
 
@@ -130,6 +153,19 @@ export class MarkdownProcessor {
             if (!trimmedLine) {
                 this.endCurrentBlocks(blocks, { currentBlock, currentList, currentTable, currentBlockquote });
                 currentBlock = currentList = currentTable = currentBlockquote = null;
+                continue;
+            }
+
+            // Check for code block placeholders (keep as distinct block)
+            const codeBlockMatch = trimmedLine.match(/^(__CODE_BLOCK_\d+__)$/);
+            if (codeBlockMatch) {
+                this.endCurrentBlocks(blocks, { currentBlock, currentList, currentTable, currentBlockquote });
+                currentBlock = currentList = currentTable = currentBlockquote = null;
+                
+                blocks.push({
+                    type: 'code_placeholder',
+                    id: codeBlockMatch[1]
+                });
                 continue;
             }
             
@@ -404,26 +440,25 @@ export class MarkdownProcessor {
             return id;
         });
         
-        // 4. Bold text
-        processedText = processedText.replace(this.patterns.bold, (match, content) => {
-            return `<strong class="markdown-bold">${content}</strong>`;
+        // 4. Inline math (e.g. $O(N)$, $O(1)$, $n$)
+        processedText = processedText.replace(this.patterns.inlineMath, (match, prefix, mathContent) => {
+            return `${prefix}<span class="inline-math"><code class="math-code">${mathContent.trim()}</code></span>`;
         });
+
+        // 5. Bold text
+        processedText = processedText.replace(/\*\*([^*]+)\*\*/g, '<strong class="markdown-bold">$1</strong>');
+        processedText = processedText.replace(/__([^_]+)__/g, '<strong class="markdown-bold">$1</strong>');
         
-        // 5. Italic text (but not if inside bold)
-        processedText = processedText.replace(this.patterns.italic, (match, content) => {
-            // Avoid double processing if this is inside bold tags
-            if (processedText.includes(`<strong class="markdown-bold">${content}</strong>`)) {
-                return match;
-            }
-            return `<em class="markdown-italic">${content}</em>`;
-        });
+        // 6. Italic text
+        processedText = processedText.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, '$1<em class="markdown-italic">$2</em>');
+        processedText = processedText.replace(/(^|[^_])_([^_]+)_(?!_)/g, '$1<em class="markdown-italic">$2</em>');
         
-        // 6. Strikethrough
+        // 7. Strikethrough
         processedText = processedText.replace(this.patterns.strikethrough, (match, content) => {
             return `<del class="markdown-strikethrough">${content}</del>`;
         });
         
-        // 7. Restore inline code
+        // 8. Restore inline code
         codeSegments.forEach(segment => {
             processedText = processedText.replace(segment.id, () => segment.html);
         });
@@ -443,7 +478,12 @@ export class MarkdownProcessor {
         const finalBlocks = [];
         
         blocks.forEach(block => {
-            if (block.type === 'paragraph' && block.content && block.content.includes('__CODE_BLOCK_')) {
+            if (block.type === 'code_placeholder') {
+                const codeBlock = codeBlockMap[block.id];
+                if (codeBlock) {
+                    finalBlocks.push(codeBlock);
+                }
+            } else if (block.type === 'paragraph' && block.content && block.content.includes('__CODE_BLOCK_')) {
                 // Split paragraph by code block placeholders
                 const parts = block.content.split(/(__CODE_BLOCK_\d+__)/);
                 
@@ -632,9 +672,42 @@ export class MarkdownProcessor {
         return `<p class="markdown-paragraph">${block.content}</p>`;
     }
 
+    normalizeLanguage(lang) {
+        if (!lang) return 'text';
+        const l = lang.toLowerCase().trim();
+        const map = {
+            'c++': 'cpp',
+            'c#': 'csharp',
+            'cs': 'csharp',
+            'f#': 'fsharp',
+            'py': 'python',
+            'js': 'javascript',
+            'ts': 'typescript',
+            'sh': 'bash',
+            'shell': 'bash',
+            'zsh': 'bash',
+            'yml': 'yaml',
+            'golang': 'go',
+            'rb': 'ruby',
+            'rs': 'rust',
+            'md': 'markdown'
+        };
+        return map[l] || l;
+    }
+
     generateCodeHTML(block) {
-        // This will be handled by the existing code block system
-        return null; // Signal to use existing code block rendering
+        const rawLang = block.language || 'text';
+        const normLang = this.normalizeLanguage(rawLang);
+        const escapedCode = this.escapeHtml(block.content || '');
+        const blockId = block.id || `code-block-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        return `<div class="code-block-container" data-block-id="${blockId}">` +
+            `<div class="code-block-header">` +
+                `<span class="code-language">${this.escapeHtml(rawLang)}</span>` +
+                `<button class="copy-button" type="button" title="Copy code">📋</button>` +
+            `</div>` +
+            `<pre class="code-block language-${normLang}"><code class="language-${normLang}">${escapedCode}</code></pre>` +
+        `</div>`;
     }
 
     /**
@@ -660,9 +733,13 @@ export class MarkdownProcessor {
      * Utility method to escape HTML
      */
     escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        if (!text) return '';
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
     }
 
     /**

@@ -210,6 +210,44 @@
 }
 
 /* ==============================================
+   MATH & COMPLEXITY NOTATION ($O(N)$, etc.)
+   ============================================== */
+
+.inline-math {
+    display: inline-block;
+    vertical-align: baseline;
+    margin: 0 0.15em;
+}
+
+.inline-math .math-code {
+    background: rgba(56, 178, 172, 0.15);
+    border: 1px solid rgba(56, 178, 172, 0.35);
+    border-radius: 4px;
+    padding: 0.1em 0.4em;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', monospace;
+    font-size: 0.88em;
+    font-style: italic;
+    color: #4fd1c5;
+    white-space: nowrap;
+}
+
+.math-block {
+    margin: 0.6rem 0;
+    padding: 0.6rem 1rem;
+    background: rgba(0, 0, 0, 0.35);
+    border-left: 3px solid #38b2ac;
+    border-radius: 4px;
+    text-align: center;
+    overflow-x: auto;
+}
+
+.math-block .math-code {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', monospace;
+    font-size: 0.95em;
+    color: #4fd1c5;
+}
+
+/* ==============================================
    PARAGRAPHS - Professional Spacing
    ============================================== */
 

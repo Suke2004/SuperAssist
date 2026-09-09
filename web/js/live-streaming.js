@@ -105,7 +105,7 @@ export class LiveStreaming {
     // Parse content for code blocks
     parseContent(content) {
         const parts = [];
-        const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+        const codeBlockRegex = /(?:```|~~~)([a-zA-Z0-9_+#.-]+)?[^\S\r\n]*\r?\n([\s\S]*?)\r?\n?[^\S\r\n]*(?:```|~~~)/g;
         let lastIndex = 0;
         let match;
 
@@ -147,32 +147,33 @@ export class LiveStreaming {
     // Add code block
     addCodeBlock(container, code, language) {
         const codeBlockDiv = document.createElement('div');
-        codeBlockDiv.className = 'code-block';
+        codeBlockDiv.className = 'code-block code-block-container';
         
         const headerDiv = document.createElement('div');
-        headerDiv.className = 'code-header';
+        headerDiv.className = 'code-header code-block-header';
         
         // Create language tag
         const languageTag = document.createElement('span');
-        languageTag.className = 'language-tag';
-        languageTag.textContent = language;
+        languageTag.className = 'language-tag code-language';
+        languageTag.textContent = language || 'text';
         
         // Create copy button with proper event handling
         const copyButton = document.createElement('button');
-        copyButton.className = 'copy-btn';
-        copyButton.innerHTML = '&#128203;'; // Clipboard icon
+        copyButton.className = 'copy-btn copy-button';
+        copyButton.type = 'button';
+        copyButton.innerHTML = '📋'; // Clipboard icon
         copyButton.addEventListener('click', async () => {
             try {
                 await navigator.clipboard.writeText(code);
                 copyButton.textContent = '✅';
                 setTimeout(() => {
-                    copyButton.innerHTML = '&#128203;';
+                    copyButton.innerHTML = '📋';
                 }, 2000);
             } catch (err) {
                 console.error('Failed to copy code:', err);
                 copyButton.textContent = '❌';
                 setTimeout(() => {
-                    copyButton.innerHTML = '&#128203;';
+                    copyButton.innerHTML = '📋';
                 }, 2000);
             }
         });
@@ -180,9 +181,11 @@ export class LiveStreaming {
         headerDiv.appendChild(languageTag);
         headerDiv.appendChild(copyButton);
         
+        const normLang = this.markdownProcessor.normalizeLanguage(language);
         const preElement = document.createElement('pre');
+        preElement.className = `code-block language-${normLang}`;
         const codeElement = document.createElement('code');
-        codeElement.className = `language-${language}`;
+        codeElement.className = `language-${normLang}`;
         codeElement.textContent = code;
         
         preElement.appendChild(codeElement);
@@ -193,7 +196,11 @@ export class LiveStreaming {
         
         // Apply syntax highlighting
         if (window.Prism) {
-            window.Prism.highlightElement(codeElement);
+            try {
+                window.Prism.highlightElement(codeElement);
+            } catch (e) {
+                console.warn('Prism highlighting error:', e);
+            }
         }
     }
 
@@ -214,6 +221,21 @@ export class LiveStreaming {
                     await this.streamListBlock(container, block, speed, onProgress);
                 } else if (block.type === 'paragraph') {
                     await this.streamParagraphBlock(container, block, speed, onProgress);
+                } else if (block.type === 'blockquote') {
+                    await this.streamBlockquoteBlock(container, block, speed, onProgress);
+                } else if (block.type === 'table') {
+                    await this.streamTableBlock(container, block, onProgress);
+                } else if (block.type === 'horizontalRule') {
+                    this.addHorizontalRule(container, block);
+                } else {
+                    const html = this.markdownProcessor.generateHTML(block);
+                    if (html) {
+                        const tempDiv = document.createElement('div');
+                        tempDiv.innerHTML = html;
+                        while (tempDiv.firstChild) {
+                            container.appendChild(tempDiv.firstChild);
+                        }
+                    }
                 }
                 
                 if (onProgress) onProgress();
@@ -226,6 +248,37 @@ export class LiveStreaming {
             console.error('Markdown processing error:', error);
             await this.streamSimpleText(container, content, speed, onProgress);
         }
+    }
+
+    // Stream a blockquote block
+    async streamBlockquoteBlock(container, block, speed, onProgress) {
+        const blockquote = document.createElement('blockquote');
+        blockquote.className = 'markdown-blockquote';
+        blockquote.id = block.id;
+        container.appendChild(blockquote);
+        await this.delay(20);
+        await this.streamTextIntoElement(blockquote, block.content, speed, onProgress);
+    }
+
+    // Stream a table block
+    async streamTableBlock(container, block, onProgress) {
+        const html = this.markdownProcessor.generateTableHTML(block);
+        if (html) {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = html;
+            while (tempDiv.firstChild) {
+                container.appendChild(tempDiv.firstChild);
+            }
+            await this.delay(40);
+            if (onProgress) onProgress();
+        }
+    }
+
+    // Add a horizontal rule
+    addHorizontalRule(container, block) {
+        const hr = document.createElement('hr');
+        hr.className = 'markdown-hr';
+        container.appendChild(hr);
     }
 
     // Stream a header block

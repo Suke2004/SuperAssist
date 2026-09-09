@@ -108,8 +108,11 @@ export async function startAudioProcessing(micId, onAudioData) {
         }
         await audioContext.audioWorklet.addModule('/static/js/audio_processor.js');
         
-        // 3. Create a single mixed processor for better diarization
-        const mixedProcessor = new AudioWorkletNode(audioContext, 'mixed-processor');
+        // 3. Create a single mixed processor with 2 inputs (input 0: mic, input 1: system)
+        const mixedProcessor = new AudioWorkletNode(audioContext, 'mixed-processor', {
+            numberOfInputs: 2,
+            numberOfOutputs: 0
+        });
 
         // Handle mixed audio with mute-aware speaker detection
         let audioProcessingCounter = 0; // For throttled logging
@@ -128,17 +131,20 @@ export async function startAudioProcessing(micId, onAudioData) {
             let speakerHint;
 
             if (muteManager.isMicrophoneMuted()) {
-                // When microphone is muted, all audio is from the interviewer.
+                // When microphone is muted, candidate speech is completely silenced.
+                // Only send chunk if genuine system (interviewer) audio is detected.
+                if (systemLevel < 0.002) {
+                    return;
+                }
                 speakerHint = 'system';
             } else if (systemLevel > 0.003 && systemLevel >= micLevel * 0.7) {
-                // When wearing headphones/earbuds, system audio is pure digital interviewer voice.
-                // If system audio is active above noise floor, it is definitively the interviewer.
+                // Digital interviewer audio active
                 speakerHint = 'system';
-            } else if (micLevel > 0.006 && micLevel > systemLevel * 1.5) {
-                // Candidate speaking with no active system audio
+            } else if (micLevel > 0.005 && micLevel > systemLevel * 1.2) {
+                // Candidate speaking
                 speakerHint = 'microphone';
             } else {
-                // Default to system if any system signal exists, ensuring interviewer is never dropped
+                // Default based on active audio energy
                 speakerHint = systemLevel > 0.002 ? 'system' : 'microphone';
             }
 
@@ -156,21 +162,21 @@ export async function startAudioProcessing(micId, onAudioData) {
         // Listen for future changes
         muteManager.on('microphoneMuteChange', updateMicGainNode);
         
-        // Connect mic through gain node for mute control
+        // Connect mic through gain node to input 0
         micSource.connect(micGainNode);
-        micGainNode.connect(mixedProcessor);
+        micGainNode.connect(mixedProcessor, 0, 0);
         
-        // System audio connects directly (check for available audio tracks)
+        // System audio connects to input 1
         if (systemStream && systemStream.getAudioTracks().length > 0) {
             const systemSource = audioContext.createMediaStreamSource(systemStream);
-            systemSource.connect(mixedProcessor);
-            console.log("🔊 System audio connected successfully");
+            systemSource.connect(mixedProcessor, 0, 1);
+            console.log("🔊 System audio connected successfully to channel 1");
         } else {
             console.warn("⚠️ No system audio track found in display stream. If capturing interviewer voice, ensure 'Share audio' is checked.");
-            // Silent dummy source so the mixed processor receives two inputs without error
+            // Silent dummy source on channel 1 so mixed processor receives two inputs
             const dummyGain = audioContext.createGain();
             dummyGain.gain.value = 0;
-            dummyGain.connect(mixedProcessor);
+            dummyGain.connect(mixedProcessor, 0, 1);
         }
 
         // Store the video track for screenshot reuse, but remove it from the stream

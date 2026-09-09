@@ -273,6 +273,41 @@ function setupEventListeners() {
     secondaryProviderSelect?.addEventListener('change', providerManager.updateSecondaryModelDropdown.bind(providerManager));
     visionProviderSelect?.addEventListener('change', providerManager.updateVisionModelDropdown.bind(providerManager));
     visionSecondaryProviderSelect?.addEventListener('change', providerManager.updateSecondaryVisionModelDropdown.bind(providerManager));
+
+    setupGlobalCopyHandler();
+}
+
+// Delegated copy handler for all code blocks
+function setupGlobalCopyHandler() {
+    document.addEventListener('click', async (e) => {
+        const copyBtn = e.target.closest('.copy-btn, .copy-button');
+        if (!copyBtn) return;
+        
+        const container = copyBtn.closest('.code-block-container, .code-block');
+        if (!container) return;
+        
+        let textToCopy = '';
+        const blockId = container.dataset.blockId;
+        if (blockId && window.liveInterviewUI?.markdownParser?.codeBlockSources?.has(blockId)) {
+            textToCopy = window.liveInterviewUI.markdownParser.codeBlockSources.get(blockId);
+        } else {
+            const codeElem = container.querySelector('code');
+            textToCopy = codeElem ? codeElem.textContent : '';
+        }
+        
+        if (textToCopy) {
+            try {
+                await navigator.clipboard.writeText(textToCopy);
+                const originalText = copyBtn.textContent;
+                copyBtn.textContent = '✅';
+                setTimeout(() => {
+                    copyBtn.textContent = originalText;
+                }, 2000);
+            } catch (err) {
+                console.warn('Copy failed:', err);
+            }
+        }
+    });
 }
 
 // Main initialization

@@ -289,6 +289,12 @@ export class WebSocketHandler {
     }
 
     sendAudioChunk(chunk, is_muted, speakerHint = 'system') {
+        if (window.muteManager?.isAudioPaused()) {
+            return;
+        }
+        if (is_muted && speakerHint === 'microphone') {
+            return;
+        }
         this.sendMessage('audio_chunk', {
             audio_b64: this.bytesToBase64(chunk),
             is_muted: is_muted,
@@ -325,7 +331,7 @@ export class WebSocketHandler {
             onboardingData: { ...state.onboardingData, selectedLanguages: state.selectedLanguages },
             is_muted: initialMuteStatus.microphone,
             is_universally_muted: initialMuteStatus.universal,
-            process_all_speakers: true,
+            process_all_speakers: false,
             aiSecondaryProvider: state.selectedSecondaryProvider.name ? {
                 provider: state.selectedSecondaryProvider.name,
                 model: state.selectedSecondaryProvider.model

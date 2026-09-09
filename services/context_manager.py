@@ -30,6 +30,7 @@ class PersistentContextManager:
             'complete_resume': '',        # UNLIMITED - Full resume
             'complete_job_description': '',  # UNLIMITED - Full job description
             'focus_areas': [],
+            'selected_languages': [],
             'additional_context': {},
             'created_at': None
         }
@@ -38,6 +39,10 @@ class PersistentContextManager:
     
     def initialize_persistent_context(self, onboarding_data: dict):
         """Initialize persistent context from onboarding data - called once per interview"""
+        languages = onboarding_data.get('selectedLanguages', []) or onboarding_data.get('selected_languages', [])
+        if isinstance(languages, str):
+            languages = [languages]
+            
         self.persistent_context.update({
             'candidate_name': onboarding_data.get('name', ''),
             'target_company': onboarding_data.get('company', ''),
@@ -45,10 +50,11 @@ class PersistentContextManager:
             'complete_resume': onboarding_data.get('resume', ''),  # FULL CONTENT
             'complete_job_description': onboarding_data.get('objectives', ''),  # FULL CONTENT
             'focus_areas': onboarding_data.get('focus', []),
+            'selected_languages': languages,
             'created_at': datetime.now().isoformat()
         })
         self.is_initialized = True
-        print(f"✅ Persistent context initialized with full resume ({len(self.persistent_context['complete_resume'])} chars)")
+        print(f"✅ Persistent context initialized with full resume ({len(self.persistent_context['complete_resume'])} chars), languages: {languages}")
     
     def add_conversation_exchange(self, interviewer_question: str, candidate_response: str = None, ai_response: str = None):
         """Add conversation exchange - limited to MAX_CONVERSATION_HISTORY most recent"""
@@ -119,6 +125,62 @@ class PersistentContextManager:
             }
         }
     
+    def get_primary_language(self) -> str:
+        """
+        Resolve the candidate's primary programming language identifier for markdown code fences.
+        Returns a normalized tag (e.g. 'cpp', 'python', 'java', 'javascript', 'typescript', 'go', 'rust').
+        """
+        # 1. Check explicitly selected languages
+        selected = self.persistent_context.get('selected_languages', [])
+        candidates = []
+        if isinstance(selected, list):
+            candidates.extend(selected)
+        elif isinstance(selected, str):
+            candidates.append(selected)
+
+        # 2. Check focus areas
+        focus = self.persistent_context.get('focus_areas', [])
+        if isinstance(focus, list):
+            candidates.extend(focus)
+
+        # Normalize lookup map
+        lang_map = {
+            'c++': 'cpp',
+            'cpp': 'cpp',
+            'python': 'python',
+            'py': 'python',
+            'java': 'java',
+            'javascript': 'javascript',
+            'js': 'javascript',
+            'typescript': 'typescript',
+            'ts': 'typescript',
+            'go': 'go',
+            'golang': 'go',
+            'rust': 'rust',
+            'rs': 'rust',
+            'c#': 'csharp',
+            'csharp': 'csharp',
+            'cs': 'csharp',
+            'c': 'c',
+            'sql': 'sql',
+            'ruby': 'ruby',
+            'swift': 'swift',
+            'kotlin': 'kotlin'
+        }
+
+        for item in candidates:
+            if not item or not isinstance(item, str):
+                continue
+            cleaned = item.strip().lower()
+            if cleaned in lang_map:
+                return lang_map[cleaned]
+            for key, val in lang_map.items():
+                if key in cleaned:
+                    return val
+
+        # Fallback default for technical interviews
+        return 'python'
+
     def ensure_context_available(self) -> bool:
         """Verify persistent context is properly initialized"""
         return self.is_initialized and bool(self.persistent_context.get('candidate_name'))

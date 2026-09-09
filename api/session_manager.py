@@ -26,7 +26,7 @@ class InterviewSession:
         self.is_active: bool = False
         self.state: Dict[str, any] = {
             "is_muted": False,
-            "process_all_speakers": True,
+            "process_all_speakers": False,
             "is_universally_muted": False
         }
         self.transcript_buffer: str = ""
@@ -64,7 +64,7 @@ class InterviewSession:
             onboarding_context = payload.get('onboardingData', {})
             
             self.state["is_muted"] = payload.get('is_muted', False)
-            self.state["process_all_speakers"] = payload.get('process_all_speakers', True)
+            self.state["process_all_speakers"] = payload.get('process_all_speakers', False)
             self.state["is_universally_muted"] = payload.get('is_universally_muted', False)
 
             await self.initialize_managers(primary_provider_config, secondary_provider_config, primary_vision_config, secondary_vision_config, onboarding_context)
@@ -92,7 +92,19 @@ class InterviewSession:
     async def handle_audio_chunk(self, payload: dict):
         """Handles incoming audio chunks."""
         self._touch()
-        if self.stt_manager and not self.state.get("is_universally_muted", False):
+        if self.state.get("is_universally_muted", False):
+            return
+
+        is_mic_muted = payload.get('is_muted', self.state.get("is_muted", False))
+        self.state["is_muted"] = is_mic_muted
+        speaker_hint = payload.get('speaker_hint', 'system')
+        self.state["last_speaker_hint"] = speaker_hint
+
+        # If microphone is muted and this chunk is from microphone, drop it immediately
+        if is_mic_muted and speaker_hint == 'microphone':
+            return
+
+        if self.stt_manager:
             encoded = payload.get('audio_b64')
             if encoded:
                 try:
@@ -103,20 +115,32 @@ class InterviewSession:
             else:
                 # Legacy shape: audio as a JSON array of byte values.
                 audio_data = bytes(payload.get('audio', []))
-            self.state["is_muted"] = payload.get('is_muted', False)
-            self.state["last_speaker_hint"] = payload.get('speaker_hint', 'system')
+            
             if audio_data:
                 await self.stt_manager.send_audio(audio_data)
 
     async def handle_config_update(self, payload: dict):
         """Handles configuration updates from the client."""
         self._touch()
-        if 'processAllSpeakers' in payload:
-            self.state["process_all_speakers"] = payload['processAllSpeakers']
-        if 'isUniversallyMuted' in payload:
-            self.state["is_universally_muted"] = payload['isUniversallyMuted']
+        if 'processAllSpeakers' in payload or 'process_all_speakers' in payload:
+            self.state["process_all_speakers"] = payload.get('processAllSpeakers', payload.get('process_all_speakers'))
+        if 'isUniversallyMuted' in payload or 'is_universally_muted' in payload:
+            now_universally_muted = payload.get('isUniversallyMuted', payload.get('is_universally_muted'))
+            self.state["is_universally_muted"] = now_universally_muted
+            if now_universally_muted:
+                if self.silence_timer:
+                    self.silence_timer.cancel()
+                    self.silence_timer = None
+                self.transcript_buffer = ""
+                print(f"⏸️ Session {self.session_id}: Universal mute enabled (silence timer cancelled, buffer cleared)")
         if 'is_muted' in payload:
-            self.state["is_muted"] = payload['is_muted']
+            now_mic_muted = payload['is_muted']
+            self.state["is_muted"] = now_mic_muted
+            if now_mic_muted:
+                if self.silence_timer:
+                    self.silence_timer.cancel()
+                    self.silence_timer = None
+                self.transcript_buffer = ""
             print(f"🎤 Session {self.session_id}: Microphone mute state updated to {self.state['is_muted']}")
         await self._send_json("config_updated", self.state)
 
@@ -239,6 +263,16 @@ class InterviewSession:
         if not self.transcript_buffer:
             return
 
+        # Abort immediately if universally muted
+        if self.state.get("is_universally_muted"):
+            self.transcript_buffer = ""
+            return
+
+        # Abort immediately if microphone is muted and candidate was the speaker
+        if self.state.get("is_muted") and self.state.get("last_speaker_hint") == "microphone":
+            self.transcript_buffer = ""
+            return
+
         transcript = self.transcript_buffer
         self.transcript_buffer = ""
         
@@ -275,10 +309,14 @@ class InterviewSession:
             return
 
         last_hint = self.state.get("last_speaker_hint", "system")
-        is_candidate_speech = (last_hint == 'microphone' and not self.state.get("is_muted"))
+        is_candidate_speech = (last_hint == 'microphone')
         
-        # If candidate speech and process_all_speakers is disabled, do not treat as question
-        if not self.state.get("process_all_speakers", True) and is_candidate_speech:
+        # When microphone is muted, NEVER process candidate speech as a prompt under any circumstance
+        if is_candidate_speech and self.state.get("is_muted"):
+            return
+
+        # If candidate speech and process_all_speakers is disabled, treat as candidate answer context, not question
+        if is_candidate_speech and not self.state.get("process_all_speakers", False):
             should_process = False
         else:
             should_process = True

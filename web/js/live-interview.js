@@ -12,6 +12,7 @@ class LiveInterviewUI {
         this.endButton = null;
         this.resetButton = null;
         this.muteButton = null;
+        this.pauseButton = null;
         this.currentInterviewerElement = null; // Track interviewer message separately
         this.currentCandidateElement = null; // Track candidate message separately
         this.currentAIElement = null; // Track AI message separately
@@ -58,6 +59,7 @@ class LiveInterviewUI {
         this.endButton = document.getElementById('end-interview-btn');
         this.resetButton = document.getElementById('reset-interview-btn');
         this.muteButton = document.getElementById('mute-btn');
+        this.pauseButton = document.getElementById('pause-btn');
         
         // Listen to the mute manager for state changes (register once)
         if (!this.muteListenerInitialized) {
@@ -81,6 +83,10 @@ class LiveInterviewUI {
         
         if (this.muteButton) {
             this.muteButton.addEventListener('click', () => this.toggleMute());
+        }
+        
+        if (this.pauseButton) {
+            this.pauseButton.addEventListener('click', () => this.togglePause());
         }
         
         // Setup smart scroll detection
@@ -1256,9 +1262,19 @@ class LiveInterviewUI {
         }
     }
 
+    // Toggle universal pause via the UI button
+    togglePause() {
+        if (window.stateManager && typeof window.stateManager.toggleUniversalMute === 'function') {
+            window.stateManager.toggleUniversalMute();
+        } else {
+            muteManager.toggleUniversalMute();
+        }
+    }
+
     // Central handler for all mute state changes
     handleMuteStateChange(status) {
         this.updateMuteButton(status.microphone);
+        this.updatePauseButton(status.universal);
         this.showActivity(); // Re-evaluates the activity indicator text
     }
 
@@ -1274,6 +1290,22 @@ class LiveInterviewUI {
                 this.muteButton.classList.remove('muted');
                 if (textSpan) textSpan.textContent = 'Mute';
                 this.muteButton.title = 'Microphone is Active (Click or Alt+M to mute)';
+            }
+        }
+    }
+
+    // Update pause button appearance
+    updatePauseButton(isPaused) {
+        if (this.pauseButton) {
+            const textSpan = this.pauseButton.querySelector('.pause-text');
+            if (isPaused) {
+                this.pauseButton.classList.add('paused');
+                if (textSpan) textSpan.textContent = 'Paused';
+                this.pauseButton.title = 'AI Listening Paused (Click or Alt+U to resume)';
+            } else {
+                this.pauseButton.classList.remove('paused');
+                if (textSpan) textSpan.textContent = 'Pause';
+                this.pauseButton.title = 'AI Listening Active (Click or Alt+U to pause)';
             }
         }
     }
@@ -1302,7 +1334,8 @@ class LiveInterviewUI {
         // Set initial UI state from the mute manager
         const initialStatus = muteManager.getMuteStatus();
         this.updateMuteButton(initialStatus.microphone);
-        console.log(`🎤 UI initialized with microphone ${initialStatus.microphone ? 'muted' : 'unmuted'}`);
+        this.updatePauseButton(initialStatus.universal);
+        console.log(`🎤 UI initialized with microphone ${initialStatus.microphone ? 'muted' : 'unmuted'}, universal pause: ${initialStatus.universal}`);
         
         // Reset scroll state
         this.scrollState = {
