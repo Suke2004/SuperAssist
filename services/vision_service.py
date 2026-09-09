@@ -331,8 +331,23 @@ SELECT ... FROM ... WHERE ...;
 ---
 """
 
+        lang_map = {
+            'c++': 'cpp', 'cpp': 'cpp', 'python': 'python', 'py': 'python',
+            'java': 'java', 'javascript': 'javascript', 'js': 'javascript',
+            'typescript': 'typescript', 'ts': 'typescript', 'go': 'go',
+            'golang': 'go', 'rust': 'rust', 'c#': 'csharp', 'c': 'c'
+        }
+        lang_tag = lang_map.get(primary_language.lower().strip(), primary_language.lower().strip())
+
         # The prompt structure
-        return f"""You are an expert AI assistant. Your task is to analyze the content of the provided screenshots.
+        return f"""You are an expert AI assistant and senior technical interview copilot. Your task is to analyze the content of the provided screenshots.
+
+CRITICAL MINDSET: Think like a real senior FAANG interviewer and candidate pair programming together, NOT a robot.
+Real interviewers evaluate:
+1. Clarifying constraints before coding.
+2. Progressive problem solving: explaining the Brute Force baseline before jumping to the Optimal solution.
+3. Providing real, complete working code for BOTH Brute Force and Optimal solutions (no skipped lines, no placeholders).
+4. Dry running test cases step-by-step to prove correctness.
 
 **Overall Goal:** Provide a clear, accurate, and comprehensive analysis based on the dominant type of content in the screenshots.
 
@@ -355,33 +370,58 @@ For EACH MCQ identified:
 3. **Key Distractor Note:** Brief note on why common incorrect options fail.
 ---
 
-**SECTION 2: CODING PROBLEM ANALYSIS & SOLUTION**
-*If a coding problem is present (either exclusively or as part of mixed content), use this section.*
+**SECTION 2: CODING / DSA PROBLEM ANALYSIS & SOLUTION**
+*If a coding or DSA problem is present (either exclusively or as part of mixed content), use this section.*
 
 {sql_instructions_for_coding if sql_available else "<!-- No specific SQL instructions for coding problem as SQL was not indicated as a relevant language. -->"}
 
-> **💬 WHAT TO SAY OUT LOUD:**
-> "[2-3 clear conversational sentences giving intuition and strategy directly to the interviewer: e.g. 'We can solve this in O(N) time and O(1) space using two pointers. We maintain left and right pointers and move inward based on condition. Let me write out the implementation.']"
+> **💬 WHAT TO SAY OUT LOUD TO THE INTERVIEWER:**
+> "[2-3 natural, conversational sentences opening the technical interview dialogue: clarify understanding, state the naive brute-force baseline, and propose the optimal strategy directly: e.g. 'To make sure we are aligned on requirements: we need to find two indices that add up to the target. A naive brute force would check all pairs with nested loops in O(N^2) time. We can optimize this to O(N) using a hash map to look up complements in O(1) time. Let me clarify constraints, walk through both approaches, and dry-run an example with you.']"
 
-### ⚡ Optimal Solution ({primary_language})
-- **Time Complexity:** O(...) — [1-line rationale]
-- **Space Complexity:** O(...) — [1-line rationale]
-- **Core Pattern:** [e.g. Two Pointers / Sliding Window / Monotonic Stack / Dynamic Programming]
+### 🎯 1. Problem Clarification & Constraints
+- **Problem Summary:** [1-2 clear sentences rephrasing the goal and expected output]
+- **Clarifying Questions & Assumptions:** [e.g. Is input sorted? Can values be negative? Are duplicates possible? What to return if no solution?]
+- **Input Constraints & Bounds:** [e.g. N <= 10^5, numbers fit in standard integer, O(N) or O(N log N) expected to avoid TLE]
 
-```{(primary_language).lower()}
-// Production-ready implementation in {primary_language}
-// Natural, professional code comments (NO emojis or academic headers in code)
-// Clean variable naming and direct edge-case handling
+### 🐢 2. Brute Force Approach
+- **Intuitive Idea:** [How a human naturally starts thinking about the problem — e.g. generate all pairs / check every combination]
+- **Complexity:** **Time:** O(...) — [1-line rationale] | **Space:** O(...) — [auxiliary memory used]
+- **The Bottleneck:** [Where redundant work happens: e.g. repeatedly re-scanning elements, causing Time Limit Exceeded (TLE) for large N]
+
+```{lang_tag}
+// Complete, working Brute Force implementation in {primary_language}
 ```
 
-### 🔍 Key Edge Cases & Interview Follow-ups
-- **Edge cases to mention:** [2-3 quick bullet points: e.g. empty input, single element, duplicates, overflow]
-- **Trade-off vs Naive:** [1-2 sentences comparing with brute force and why this optimal approach is superior]
+### ⚡ 3. Optimal Solution ([Core Pattern / Technique Name])
+- **The Core Insight:** [How we eliminate the bottleneck: e.g. trading space for time with Hash Table, or Two Pointers after sorting]
+- **Step-by-Step Algorithm:**
+  1. [Step 1: Setup & Initialization]
+  2. [Step 2: Traversal & Invariant Maintenance]
+  3. [Step 3: Return Condition & Post-processing]
+- **Complexity:** **Time:** O(...) — [step-by-step rationale] | **Space:** O(...) — [auxiliary memory breakdown]
+
+```{lang_tag}
+// Complete, production-grade Optimal implementation in {primary_language}
+// Clean variable names, idiomatic style, robust edge-case handling
+```
+
+### 🧪 4. Dry Run on Given Test Cases
+*Trace through a concrete example step-by-step showing how pointers/variables evolve:*
+- **Input Example:** `[e.g. nums = [2, 7, 11, 15], target = 9]`
+- **Step-by-Step Execution:**
+  - **Step 1:** [Current index/element, state of data structure, check condition -> outcome]
+  - **Step 2:** [Next index/element, state of data structure, check condition -> outcome]
+- **Final Output:** `[e.g. [0, 1]]`
+
+### 🔍 5. Edge Cases & Interview Follow-ups
+- **Edge Cases Handled:** [e.g. Empty array, single element, duplicates, negative numbers, extreme values]
+- **Follow-up / Scaling:** [1-2 sentences on how to handle streaming data or inputs larger than RAM]
 
 **Final Instructions:**
-- Be concise yet thorough.
+- Provide complete code for BOTH Brute Force and Optimal solutions.
+- Use `###` header format for all 5 numbered section titles. Never prefix section titles with bullet points (`- ` or `* `).
 - Ensure your analysis directly addresses the content of the screenshots.
-- If providing code, make sure it is well-commented and follows best practices for {primary_language}.
+- Never wrap your entire answer in ```markdown``` fences.
 """
 
     async def get_all_vision_status(self) -> Dict[str, Dict[str, Any]]:

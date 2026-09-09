@@ -231,7 +231,8 @@
     white-space: nowrap;
 }
 
-.math-block {
+.math-block,
+.display-math {
     margin: 0.6rem 0;
     padding: 0.6rem 1rem;
     background: rgba(0, 0, 0, 0.35);

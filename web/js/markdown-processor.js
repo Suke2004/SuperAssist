@@ -26,7 +26,7 @@ export class MarkdownProcessor {
             displayMath: /\$\$([\s\S]+?)\$\$/g,
 
             // Inline math ($...$, e.g. $O(N)$, $O(1)$, $n$)
-            inlineMath: /(^|[^\\])\$([a-zA-Z0-9_\\{}[\]^+\-*\/=<>(),. ]+?)\$/g,
+            inlineMath: /(^|[^\\])\$([a-zA-Z0-9_\\{}[\]^+\-*\/=<>(),. →←⇒⇐↔≤≥≠×·≈±…]+?)\$/gu,
 
             // Headers
             header: /^(#{1,6})\s+(.+)$/m,
@@ -103,7 +103,7 @@ export class MarkdownProcessor {
         this.patterns.codeBlock.lastIndex = 0;
         
         let textWithPlaceholders = text.replace(this.patterns.codeBlock, (match, language, code) => {
-            const id = `__CODE_BLOCK_${codeBlocks.length}__`;
+            const id = `\uE002CODEBLOCK${codeBlocks.length}\uE003`;
             codeBlocks.push({
                 id,
                 type: 'code',
@@ -120,7 +120,7 @@ export class MarkdownProcessor {
             const fullMatch = unclosedFenceMatch[0];
             const language = unclosedFenceMatch[1];
             const code = unclosedFenceMatch[2];
-            const id = `__CODE_BLOCK_${codeBlocks.length}__`;
+            const id = `\uE002CODEBLOCK${codeBlocks.length}\uE003`;
             codeBlocks.push({
                 id,
                 type: 'code',
@@ -157,7 +157,7 @@ export class MarkdownProcessor {
             }
 
             // Check for code block placeholders (keep as distinct block)
-            const codeBlockMatch = trimmedLine.match(/^(__CODE_BLOCK_\d+__)$/);
+            const codeBlockMatch = trimmedLine.match(/^(\uE002CODEBLOCK\d+\uE003|__CODE_BLOCK_\d+__)$/);
             if (codeBlockMatch) {
                 this.endCurrentBlocks(blocks, { currentBlock, currentList, currentTable, currentBlockquote });
                 currentBlock = currentList = currentTable = currentBlockquote = null;
@@ -191,6 +191,21 @@ export class MarkdownProcessor {
                     type: 'header',
                     level: headerMatch[1].length,
                     content: headerMatch[2].trim(),
+                    id: `header-${this.elementCounter++}`
+                });
+                continue;
+            }
+
+            // Check for major interview section headers (even if model prefixed with - / * or omitted ###)
+            const sectionHeaderMatch = trimmedLine.match(/^(?:[-*+]\s+)?(?:\*\*)?(?:#{1,6}\s*)?([0-9]\.\s+(?:Problem Clarification|Brute Force|Optimal Solution|Dry Run|Edge Cases|Requirements|Architecture|Complexity)[^*:\r\n]*?)(?:\*\*)?:?$/i);
+            if (sectionHeaderMatch) {
+                this.endCurrentBlocks(blocks, { currentBlock, currentList, currentTable, currentBlockquote });
+                currentBlock = currentList = currentTable = currentBlockquote = null;
+                
+                blocks.push({
+                    type: 'header',
+                    level: 3,
+                    content: sectionHeaderMatch[1].trim(),
                     id: `header-${this.elementCounter++}`
                 });
                 continue;
@@ -429,9 +444,10 @@ export class MarkdownProcessor {
         });
         
         // 3. Inline code (highest priority for text formatting - don't format inside)
+        // Uses Unicode private-use token (\uE000...\uE001) to guarantee zero collisions with markdown bold/italic underscores
         const codeSegments = [];
         let processedText = text.replace(this.patterns.inlineCode, (match, code) => {
-            const id = `__INLINE_CODE_${codeSegments.length}__`;
+            const id = `\uE000INLINECODE${codeSegments.length}\uE001`;
             codeSegments.push({
                 id,
                 content: code,
@@ -439,10 +455,47 @@ export class MarkdownProcessor {
             });
             return id;
         });
+
+        // Common LaTeX arrows and symbols often output in dry-runs and complexity
+        processedText = processedText
+            .replace(/\\rightarrow\b|\\to\b/g, '→')
+            .replace(/\\leftarrow\b/g, '←')
+            .replace(/\\Rightarrow\b/g, '⇒')
+            .replace(/\\Leftarrow\b/g, '⇐')
+            .replace(/\\leftrightarrow\b/g, '↔')
+            .replace(/\\le\b|\\leq\b/g, '≤')
+            .replace(/\\ge\b|\\geq\b/g, '≥')
+            .replace(/\\ne\b|\\neq\b/g, '≠')
+            .replace(/\\times\b/g, '×')
+            .replace(/\\cdot\b/g, '·')
+            .replace(/\\approx\b/g, '≈')
+            .replace(/\\pm\b/g, '±')
+            .replace(/\\dots\b|\\cdots\b|\\ldots\b/g, '…');
+
+        // Display math ($$...$$)
+        processedText = processedText.replace(this.patterns.displayMath, (match, mathContent) => {
+            let cleanMath = mathContent.trim()
+                .replace(/\\rightarrow\b|\\to\b/g, '→')
+                .replace(/\\leftarrow\b/g, '←')
+                .replace(/\\le\b|\\leq\b/g, '≤')
+                .replace(/\\ge\b|\\geq\b/g, '≥')
+                .replace(/\\ne\b|\\neq\b/g, '≠')
+                .replace(/\\times\b/g, '×')
+                .replace(/\\approx\b/g, '≈');
+            return `<div class="display-math"><code class="math-code">${cleanMath}</code></div>`;
+        });
         
         // 4. Inline math (e.g. $O(N)$, $O(1)$, $n$)
         processedText = processedText.replace(this.patterns.inlineMath, (match, prefix, mathContent) => {
-            return `${prefix}<span class="inline-math"><code class="math-code">${mathContent.trim()}</code></span>`;
+            let cleanMath = mathContent.trim()
+                .replace(/\\rightarrow\b|\\to\b/g, '→')
+                .replace(/\\leftarrow\b/g, '←')
+                .replace(/\\le\b|\\leq\b/g, '≤')
+                .replace(/\\ge\b|\\geq\b/g, '≥')
+                .replace(/\\ne\b|\\neq\b/g, '≠')
+                .replace(/\\times\b/g, '×')
+                .replace(/\\approx\b/g, '≈');
+            return `${prefix}<span class="inline-math"><code class="math-code">${cleanMath}</code></span>`;
         });
 
         // 5. Bold text
@@ -460,7 +513,7 @@ export class MarkdownProcessor {
         
         // 8. Restore inline code
         codeSegments.forEach(segment => {
-            processedText = processedText.replace(segment.id, () => segment.html);
+            processedText = processedText.replaceAll(segment.id, () => segment.html);
         });
         
         return processedText;
@@ -476,6 +529,8 @@ export class MarkdownProcessor {
         });
         
         const finalBlocks = [];
+        const codeBlockRegex = /(\uE002CODEBLOCK\d+\uE003|__CODE_BLOCK_\d+__)/g;
+        const codeBlockExactRegex = /^(\uE002CODEBLOCK\d+\uE003|__CODE_BLOCK_\d+__)$/;
         
         blocks.forEach(block => {
             if (block.type === 'code_placeholder') {
@@ -483,12 +538,12 @@ export class MarkdownProcessor {
                 if (codeBlock) {
                     finalBlocks.push(codeBlock);
                 }
-            } else if (block.type === 'paragraph' && block.content && block.content.includes('__CODE_BLOCK_')) {
+            } else if (block.type === 'paragraph' && block.content && (block.content.includes('\uE002CODEBLOCK') || block.content.includes('__CODE_BLOCK_'))) {
                 // Split paragraph by code block placeholders
-                const parts = block.content.split(/(__CODE_BLOCK_\d+__)/);
+                const parts = block.content.split(codeBlockRegex);
                 
                 parts.forEach(part => {
-                    if (part.match(/^__CODE_BLOCK_\d+__$/)) {
+                    if (part.match(codeBlockExactRegex)) {
                         const codeBlock = codeBlockMap[part];
                         if (codeBlock) {
                             finalBlocks.push(codeBlock);
@@ -504,9 +559,9 @@ export class MarkdownProcessor {
             } else if (block.type === 'table' && block.headers) {
                 // Process table headers and cells for code blocks
                 const processedHeaders = block.headers.map(header => {
-                    if (header && header.includes('__CODE_BLOCK_')) {
+                    if (header && (header.includes('\uE002CODEBLOCK') || header.includes('__CODE_BLOCK_'))) {
                         // For table cells, we'll inline the code
-                        return header.replace(/(__CODE_BLOCK_\d+__)/g, (match) => {
+                        return header.replace(codeBlockRegex, (match) => {
                             const codeBlock = codeBlockMap[match];
                             return codeBlock ? `<code>${this.escapeHtml(codeBlock.content)}</code>` : match;
                         });
@@ -516,8 +571,8 @@ export class MarkdownProcessor {
                 
                 const processedRows = block.rows.map(row => 
                     row.map(cell => {
-                        if (cell && cell.includes('__CODE_BLOCK_')) {
-                            return cell.replace(/(__CODE_BLOCK_\d+__)/g, (match) => {
+                        if (cell && (cell.includes('\uE002CODEBLOCK') || cell.includes('__CODE_BLOCK_'))) {
+                            return cell.replace(codeBlockRegex, (match) => {
                                 const codeBlock = codeBlockMap[match];
                                 return codeBlock ? `<code>${this.escapeHtml(codeBlock.content)}</code>` : match;
                             });
@@ -531,9 +586,9 @@ export class MarkdownProcessor {
                     headers: processedHeaders,
                     rows: processedRows
                 });
-            } else if (block.content && block.content.includes('__CODE_BLOCK_')) {
+            } else if (block.content && (block.content.includes('\uE002CODEBLOCK') || block.content.includes('__CODE_BLOCK_'))) {
                 // Process other block types that might contain code blocks
-                const processedContent = block.content.replace(/(__CODE_BLOCK_\d+__)/g, (match) => {
+                const processedContent = block.content.replace(codeBlockRegex, (match) => {
                     const codeBlock = codeBlockMap[match];
                     return codeBlock ? `<code>${this.escapeHtml(codeBlock.content)}</code>` : match;
                 });
@@ -699,7 +754,8 @@ export class MarkdownProcessor {
         const rawLang = block.language || 'text';
         const normLang = this.normalizeLanguage(rawLang);
         const escapedCode = this.escapeHtml(block.content || '');
-        const blockId = block.id || `code-block-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const cleanIdSuffix = block.id ? block.id.replace(/[^\w-]/g, '').toLowerCase() : `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const blockId = cleanIdSuffix.startsWith('code-block-') ? cleanIdSuffix : `code-block-${cleanIdSuffix}`;
 
         return `<div class="code-block-container" data-block-id="${blockId}">` +
             `<div class="code-block-header">` +

@@ -101,12 +101,20 @@ class LLMManager:
         # Add question to conversation history (once, before retry loop)
         self.context_manager.add_conversation_exchange(question)
         
+        # Dynamically reload prompts to ensure any prompt updates take effect immediately
+        import importlib
+        import core.prompts as prompts_module
+        try:
+            importlib.reload(prompts_module)
+        except Exception:
+            pass
+
         # Generate prompt with persistent context.
         # GENERATE_FULL_ANSWERS=false routes to the short-form prompt.
         if settings.GENERATE_FULL_ANSWERS:
-            prompt = get_interview_answer_prompt(question, self.context_manager)
+            prompt = prompts_module.get_interview_answer_prompt(question, self.context_manager)
         else:
-            prompt = get_quick_response_prompt(question, self.context_manager)
+            prompt = prompts_module.get_quick_response_prompt(question, self.context_manager)
         
         print(f"🎯 Processing with {self.provider_name}-{self.model_name}: '{question[:100]}...'")
         
