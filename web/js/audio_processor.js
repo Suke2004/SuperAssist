@@ -54,19 +54,27 @@ class MixedProcessor extends AudioWorkletProcessor {
             micGain = 0.2; // Soft gate on pure room silence/fan noise
         }
 
+        // A3: double-talk detection for sidechain ducking (computed once per
+        // quantum, applied per sample below).
+        const doubleTalk = sysRMS > 0.003 && micRMS > 0.01;
+        const micDuck = 0.12; // heavy duck keeps interviewer stream clean
+
         for (let i = 0; i < frameLength; i++) {
             const micSample = (i < micLen ? micInput[i] : 0) * micGain;
             const systemSample = i < sysLen ? systemInput[i] : 0;
 
-            // Adaptive mixing:
+            // Adaptive mixing (A3 fix):
             // If only one stream has active signal, avoid the 0.7x volume penalty
-            // so quiet speakers aren't attenuated. If both are active, blend smoothly.
+            // so quiet speakers aren't attenuated. If both are active (double-talk),
+            // SIDECHAIN-DUCK the mic hard instead of blending two voices — blending
+            // made Deepgram transcribe overlapping speech into garbage that polluted
+            // the question buffer. The interviewer stream stays clean.
             let mixed;
-            if (sysRMS > 0.003 && micRMS > 0.01) {
-                // Both active: blend with limiter to avoid clipping
-                mixed = (micSample + systemSample) * 0.75;
+            if (doubleTalk) {
+                // Both active: heavily duck mic into the clean interviewer stream
+                mixed = systemSample + micSample * micDuck;
             } else if (sysRMS > 0.002) {
-                // Interviewer solo: full clean signal without attenuation
+                // Interviewer solo: full clean signal, trace mic bleed
                 mixed = systemSample + micSample * 0.1;
             } else {
                 // Candidate solo

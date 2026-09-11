@@ -10,9 +10,16 @@ __pycache__/
 # --- VSCode ---
 .vscode/
 
+# --- Codebuff/Freebuff agent workspace ---
+.freebuff/
+
 # --- Build artifacts ---
 dist/
 build/
 *.spec
 # AI Provider configuration file with secret keys
 ai_providers.json
+
+# --- Runtime artifacts ---
+# Interview transcript exports (personal data, never commit)
+exports/

@@ -1,5 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
+chcp 65001 >nul
+set "PYTHONUTF8=1"
 
 :: ====================================================
 :: SuperAssist Application Launcher
@@ -63,6 +65,9 @@ echo [4/5] Checking dependencies...
 if "%1"=="--update" goto INSTALL_DEPS
 if "%1"=="--install" goto INSTALL_DEPS
 if not exist "venv\Lib\site-packages\fastapi\" goto INSTALL_DEPS
+if not exist "venv\Lib\site-packages\aiofiles\" goto INSTALL_DEPS
+python -c "import aiofiles, fastapi, webview" >nul 2>&1
+if errorlevel 1 goto INSTALL_DEPS
 
 echo    Fast boot: Core dependencies verified. Skipping slow pip check.
 echo    (Run 'run.bat --update' if you need to reinstall/update requirements)
@@ -76,7 +81,7 @@ if errorlevel 1 (
 )
 
 echo    Installing requirements from requirements.txt...
-pip install -r requirements.txt --quiet --timeout 60
+python -m pip install -r requirements.txt --quiet --timeout 60
 if errorlevel 1 (
     echo ERROR: Failed to install dependencies!
     echo Please check requirements.txt and your internet connection

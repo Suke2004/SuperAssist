@@ -1,5 +1,17 @@
-pywebview
+# Pinned to known-good minimums (D11). Upper bounds intentionally omitted -
+# the run.bat fast-boot check imports core deps to validate the venv anyway.
+pywebview>=5.0
 pywin32; sys_platform == 'win32'
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic-settings>=2.2
+openai>=1.30
+deepgram-sdk==3.*
+httpx>=0.27
+orjson>=3.10
+aiofiles>=23.2
+pynput>=1.7.6
+python-dotenv>=1.0
 pyobjc-framework-Cocoa; sys_platform == 'darwin'
 pyobjc-framework-Quartz; sys_platform == 'darwin'
 fastapi
@@ -7,8 +19,7 @@ uvicorn[standard]
 pydantic-settings
 openai
 deepgram-sdk==3.*
-requests
-httpx
+httpx>=0.27  # replaces unused 'requests' — all HTTP now goes through httpx/openai
 orjson
 aiofiles
 pynput

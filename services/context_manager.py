@@ -35,6 +35,7 @@ class PersistentContextManager:
             'created_at': None
         }
         self.conversation_history = []  # Limited to MAX_CONVERSATION_HISTORY exchanges
+        self.vision_analyses: list = []  # M2: vision analyses kept separate from AI answers
         self.is_initialized = False
     
     def initialize_persistent_context(self, onboarding_data: dict):
@@ -101,6 +102,19 @@ class PersistentContextManager:
         # Filter out thinking content
         filtered_ai_response = filter_thinking_content(ai_response)
         
+        # M2 fix: a vision analysis must NOT overwrite the AI's answer to the
+        # last interview question — that erased conversational memory and left
+        # the next prompt amnesiac about its own last answer. Analyses are
+        # stored in a dedicated slot and appended to the latest exchange's
+        # context at prompt-build time via get_complete_context().
+        if response_type == "vision":
+            self.vision_analyses.append(filtered_ai_response)
+            # Keep only the most recent analyses (bounded).
+            if len(self.vision_analyses) > 3:
+                del self.vision_analyses[:len(self.vision_analyses) - 3]
+            print(f"✅ Vision analysis stored separately (total: {len(self.vision_analyses)})")
+            return
+        
         # Add to the last exchange if it exists, otherwise create a new one
         if self.conversation_history:
             self.conversation_history[-1]['ai_response'] = filtered_ai_response
@@ -126,6 +140,9 @@ class PersistentContextManager:
         return {
             'persistent': self.persistent_context,
             'conversation_history': self.conversation_history,
+            # M2: expose the latest vision analysis so prompts can reference
+            # the on-screen problem without destroying answer memory.
+            'latest_vision_analysis': self.vision_analyses[-1] if self.vision_analyses else None,
             'context_stats': {
                 'resume_length': len(self.persistent_context['complete_resume']),
                 'job_desc_length': len(self.persistent_context['complete_job_description']),
@@ -201,4 +218,5 @@ class PersistentContextManager:
     def reset_conversation_history(self):
         """Resets the conversation history."""
         self.conversation_history = []
+        self.vision_analyses = []
         print("🔄 Conversation history reset")

@@ -185,11 +185,7 @@ def _coding_template(target_lang: str) -> str:
 - **Intuitive Idea:** [How a human naturally starts thinking about the problem — generate all pairs / subsets / combinations]
 - **Complexity:** **Time:** $O(...)$ — [count the actual work in one line] | **Space:** $O(...)$ — [auxiliary memory only]
 - **The Bottleneck:** [Name the EXACT redundant work — e.g. "for each element we re-scan the whole array for its complement; that repeated rescan is what causes TLE at large N"]
-
-```{target_lang}
-// Complete, working Brute Force implementation — no placeholders
-// include the key steps of algorithm in the comments
-```
+- **Approach Outline:** [1-2 concise lines or brief pseudo-code outline of the naive logic — save full code implementation for the Optimal Solution below]
 
 ### ⚡ 3. Optimal Solution ([Core Pattern / Technique Name])
 - **Pattern Recognition:** [What signal in the problem points to this pattern — repeated lookups → hash map; sorted/contiguous → two pointers or sliding window; top-k → heap]
@@ -344,12 +340,16 @@ def get_interview_answer_prompt(question: str, context_manager: PersistentContex
     # generic answer instead of crashing mid-interview.
     persistent_context: dict = {}
     conversation_history: List[dict] = []
+    latest_vision_analysis = None
     target_lang = 'python'
 
     if context_manager is not None and context_manager.ensure_context_available():
         complete_context = context_manager.get_complete_context()
         persistent_context = complete_context.get('persistent') or {}
         conversation_history = complete_context.get('conversation_history') or []
+        # M2: the latest on-screen vision analysis rides along with the prompt
+        # (kept separate from answer memory so it never overwrites an answer).
+        latest_vision_analysis = complete_context.get('latest_vision_analysis')
         if hasattr(context_manager, 'get_primary_language'):
             target_lang = context_manager.get_primary_language() or 'python'
 
@@ -362,6 +362,13 @@ def get_interview_answer_prompt(question: str, context_manager: PersistentContex
     # Recent conversation history
     if settings.INCLUDE_CONVERSATION_HISTORY and conversation_history:
         prompt_parts.append(build_conversation_history_block(conversation_history))
+        prompt_parts.append("=" * 80)
+
+    # M2: latest vision analysis of the on-screen problem, if any.
+    if latest_vision_analysis:
+        prompt_parts.append("🖥️ LATEST ON-SCREEN CONTEXT (from periodic vision analysis; may be partial):")
+        prompt_parts.append(latest_vision_analysis)
+        prompt_parts.append("(Use this to stay oriented on the problem currently displayed, without re-answering it unless the current question asks.)")
         prompt_parts.append("=" * 80)
 
     # Current question to answer

@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     GENERATE_FULL_ANSWERS: bool = True
     PERSONALIZE_ANSWERS: bool = True
 
+    # P1: STT transcription language. 'en' for English-only, 'multi' for
+    # Deepgram nova-3 code-switching across languages.
+    STT_LANGUAGE: str = "en"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding='utf-8',

@@ -66,6 +66,7 @@ export class StateManager {
             visionSecondaryProviderSelect: document.getElementById('vision-secondary-provider-select'),
             visionSecondaryModelSelect: document.getElementById('vision-secondary-model-select'),
             languageCheckboxes: document.querySelectorAll('input[name="language"]'),
+            sttLanguageSelect: document.getElementById('stt-language-select'),
         };
     }
 
@@ -175,6 +176,8 @@ export class StateManager {
         this.appState.selectedSecondaryVisionProvider.name = secondaryVisionProvider || null;
         this.appState.selectedSecondaryVisionProvider.model = secondaryVisionModel || null;
         this.appState.selectedLanguages = selectedLanguages;
+        // P1: STT language for Deepgram ('en' | 'multi').
+        this.appState.sttLanguage = this.onboardingForm.sttLanguageSelect?.value || 'en';
 
         devLog("Onboarding data captured:", this.appState);
         return true;

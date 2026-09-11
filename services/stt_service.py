@@ -7,6 +7,7 @@ from deepgram import (
     LiveOptions,
 )
 from core.config import settings
+from api.metrics import app_metrics
 
 async def verify_deepgram_api_key():
     """
@@ -40,15 +41,26 @@ class DeepgramManager:
     """
     Manages the connection to Deepgram for live transcription.
     """
-    def __init__(self, transcript_callback, user_languages=None):
+    def __init__(self, transcript_callback, user_languages=None, language: str = "en"):
         self.transcript_callback = transcript_callback
         self.dg_connection = None
         self.is_connected = False
         self.stop_event = asyncio.Event()
         self.user_languages = user_languages or []
+        # P1: transcription language — 'en' or 'multi' (Deepgram nova-3
+        # supports multi-language code-switching via language="multi").
+        self.language = language if language in ("en", "multi") else "en"
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 5
         self._reconnect_base_delay = 1.0  # seconds
+        # A1: singleflight guard - only one reconnect loop may run at a time.
+        # on_error and on_close both fire for the same dropped socket; without
+        # the guard each spawns its own reconnect task and two loops race,
+        # opening duplicate Deepgram connections.
+        self._reconnect_task: asyncio.Task = None
+        # Initial-connection retry budget (A2): the very first start() gets a
+        # bounded number of attempts before we give up and raise.
+        self._initial_connect_max_attempts = 3
         
         # No buffering - process final results immediately for faster response
         
@@ -173,9 +185,39 @@ class DeepgramManager:
         return final_keyterms[:85]
 
     async def start(self):
-        """Starts the Deepgram transcription connection."""
+        """Starts the Deepgram transcription connection, retrying initial failures.
+
+        A2: previously a failed first connect was only printed and every audio
+        chunk was then silently dropped forever. Now the connection is retried
+        with the same exponential backoff used for reconnects, and if all
+        attempts fail the exception propagates so handle_start_interview can
+        surface a real error to the user.
+        """
+        last_error = None
+        for attempt in range(1, self._initial_connect_max_attempts + 1):
+            try:
+                await self._connect_once()
+                self._reconnect_attempts = 0  # Reset on successful connect
+                print("Deepgram connection started successfully")
+                return
+            except Exception as e:
+                last_error = e
+                self.is_connected = False
+                app_metrics.inc("deepgram_connect_failures")
+                print(f"Deepgram connect attempt {attempt}/{self._initial_connect_max_attempts} failed: {e}")
+                if attempt < self._initial_connect_max_attempts:
+                    delay = self._reconnect_base_delay * (2 ** (attempt - 1))
+                    await asyncio.sleep(delay)
+
+        self.is_connected = False
+        print(f"ERROR: Could not start Deepgram connection after "
+              f"{self._initial_connect_max_attempts} attempts: {last_error}")
+        raise RuntimeError(f"Deepgram connection failed: {last_error}") from last_error
+
+    async def _connect_once(self):
+        """Create a fresh Deepgram connection and start it (single attempt)."""
         self.dg_connection = self.deepgram.listen.asynclive.v("1")
-        
+
         self.dg_connection.on(LiveTranscriptionEvents.Open, self.on_open)
         self.dg_connection.on(LiveTranscriptionEvents.Transcript, self.on_message)
         self.dg_connection.on(LiveTranscriptionEvents.Error, self.on_error)
@@ -187,7 +229,7 @@ class DeepgramManager:
         # Optimized settings for real-time transcription with Nova-3
         options = LiveOptions(
             model="nova-3",  # Updated to Nova-3 for better accuracy
-            language="en",
+            language=self.language,  # P1: 'en' or 'multi' (code-switching)
             smart_format=True,
             encoding="linear16",
             channels=1,
@@ -244,33 +286,60 @@ class DeepgramManager:
         try:
             await self.dg_connection.start(options)
             self.is_connected = True
-            self._reconnect_attempts = 0  # Reset on successful connect
-            print("✅ Deepgram connection started successfully")
         except Exception as e:
-            print(f"❌ ERROR: Could not start Deepgram connection: {e}")
+            self.is_connected = False
+            raise  # A2: propagate so start() can retry and eventually surface the error
 
     async def _reconnect(self):
-        """Attempt to reconnect to Deepgram with exponential backoff."""
+        """Attempt to reconnect to Deepgram with exponential backoff.
+
+        A1: singleflight - if a reconnect loop is already running, this call
+        returns immediately instead of spawning a second racing loop.
+        """
+        if self.stop_event.is_set():
+            return
+        existing = self._reconnect_task
+        if existing is not None and not existing.done():
+            return  # Another reconnect loop is already in flight
+        self._reconnect_task = asyncio.current_task()
+        try:
+            await self._reconnect_loop()
+        finally:
+            self._reconnect_task = None
+
+    async def _reconnect_loop(self):
+        """Reconnect rounds with exponential backoff until success or max attempts.
+
+        All rounds run inside the SAME task (the singleflight holder), so a
+        failure never spawns a replacement task and the attempt count stays honest.
+        """
         if self.stop_event.is_set():
             return
         if self._reconnect_attempts >= self._max_reconnect_attempts:
             print(f"❌ Deepgram: max reconnect attempts ({self._max_reconnect_attempts}) reached, giving up")
             return
 
-        self._reconnect_attempts += 1
-        delay = self._reconnect_base_delay * (2 ** (self._reconnect_attempts - 1))
-        print(f"🔄 Deepgram reconnect attempt {self._reconnect_attempts}/{self._max_reconnect_attempts} in {delay:.1f}s...")
-        await asyncio.sleep(delay)
+        while not self.stop_event.is_set() and self._reconnect_attempts < self._max_reconnect_attempts:
+            self._reconnect_attempts += 1
+            delay = self._reconnect_base_delay * (2 ** (self._reconnect_attempts - 1))
+            print(f"🔄 Deepgram reconnect attempt {self._reconnect_attempts}/{self._max_reconnect_attempts} in {delay:.1f}s...")
+            await asyncio.sleep(delay)
 
-        if self.stop_event.is_set():
-            return
+            if self.stop_event.is_set():
+                return
 
-        try:
-            await self.start()
-            print(f"✅ Deepgram reconnected after {self._reconnect_attempts} attempt(s)")
-        except Exception as e:
-            print(f"❌ Deepgram reconnect failed: {e}")
-            asyncio.create_task(self._reconnect())
+            try:
+                await self.start()  # start() applies its own per-round retry budget
+                print(f"✅ Deepgram reconnected after {self._reconnect_attempts} attempt(s)")
+                return
+            except Exception as e:
+                self.is_connected = False
+                print(f"❌ Deepgram reconnect failed: {e}")
+                app_metrics.inc("deepgram_reconnects")
+                # Loop continues to the next backoff round
+
+        if self._reconnect_attempts >= self._max_reconnect_attempts:
+            print(f"❌ Deepgram: max reconnect attempts ({self._max_reconnect_attempts}) reached, giving up")
 
     async def on_open(self, *args, **kwargs):
         print("🔗 Deepgram connection opened")
@@ -356,13 +425,14 @@ class DeepgramManager:
         error = kwargs.get('error', 'unknown')
         print(f"❌ Deepgram error: {error}")
         self.is_connected = False
-        # Trigger auto-reconnect on error
+        # Trigger auto-reconnect on error (singleflight-guarded in _reconnect)
         asyncio.create_task(self._reconnect())
 
     async def on_close(self, *args, **kwargs):
         print("🔌 Deepgram connection closed")
         self.is_connected = False
-        # Auto-reconnect if we didn't intentionally close
+        # Auto-reconnect if we didn't intentionally close (singleflight-guarded,
+        # so on_error + on_close firing together only produces one loop)
         if not self.stop_event.is_set():
             print("⚠️ Unexpected Deepgram close, attempting reconnect...")
             asyncio.create_task(self._reconnect())
@@ -377,6 +447,16 @@ class DeepgramManager:
         print("🛑 Closing Deepgram connection...")
         self.stop_event.set()
         
+        # A1: stop any in-flight reconnect loop before closing the socket.
+        task = self._reconnect_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._reconnect_task = None
+
         if self.dg_connection:
             await self.dg_connection.finish()
             print("✅ Deepgram connection closed successfully")

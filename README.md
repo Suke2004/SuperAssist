@@ -631,7 +631,7 @@ Fine-tune how scrolling feels during a live interview:
 | Feel | `SCROLL_SPEED_PX` | `SCROLL_INTERVAL_MS` |
 |------|-------------------|----------------------|
 | 🐢 Slow & precise | `100` | `80` |
-| ⚡ Default | `200` | `50` |
+| ⚡ Default | `120` | `50` |
 | 🚀 Fast scanning | `400` | `30` |
 
 ### 🤖 AI Providers (`ai_providers.json`)

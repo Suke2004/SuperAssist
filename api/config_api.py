@@ -10,6 +10,7 @@ from services.vision_service import verify_vision_provider_connection
 from core.env_utils import env_manager
 import shutil
 import os
+from datetime import datetime
 
 router = APIRouter()
 
@@ -228,6 +229,48 @@ async def verify_vision_ai_provider(request: ProviderVerifyRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to verify vision provider: {e}")
+
+class ExportTranscriptRequest(BaseModel):
+    session_id: str
+
+
+@router.post("/api/export-transcript")
+async def export_transcript(request: ExportTranscriptRequest):
+    """P3: export the session's turn-by-turn transcript log to a local .txt file.
+
+    Writes to exports/ in the project root and returns the file path so the
+    frontend can show the user where the interview record was saved.
+    """
+    from .session_manager import session_manager
+
+    session = session_manager.active_sessions.get(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not session.transcript_log:
+        raise HTTPException(status_code=400, detail="No transcript recorded for this session")
+
+    os.makedirs("exports", exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = os.path.join("exports", f"interview_{stamp}.txt")
+
+    lines = [f"Interview transcript — {datetime.now().strftime('%Y-%m-%d %H:%M')}"]
+    ctx = session.llm_manager.shared_context.get_complete_context() if session.llm_manager else {}
+    persistent = (ctx.get('persistent') or {}).get('persistent') or {}
+    if persistent.get('candidate_name') or persistent.get('target_role'):
+        lines.append(f"Candidate: {persistent.get('candidate_name', '')} | Role: {persistent.get('target_role', '')}")
+    lines.append("=" * 60)
+    for turn in session.transcript_log:
+        who = "CANDIDATE" if turn['speaker'] == 'candidate' else "INTERVIEWER"
+        lines.append(f"[{turn['timestamp'][11:19]}] {who}: {turn['text']}")
+
+    async with aiofiles.open(path, "w", encoding="utf-8") as f:
+        await f.write("\n".join(lines))
+
+    from .metrics import app_metrics
+    app_metrics.inc("transcripts_exported")
+
+    return {"success": True, "path": os.path.abspath(path), "turns": len(session.transcript_log)}
+
 
 @router.get("/api/transparency")
 async def get_transparency():

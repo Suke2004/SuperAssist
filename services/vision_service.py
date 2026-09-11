@@ -1,12 +1,21 @@
 import orjson
 import asyncio
 import base64
+import os
 import threading
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
-from openai import AsyncOpenAI, APIStatusError
+from openai import AsyncOpenAI, APIStatusError, Timeout
 from core.config import settings
 from core.key_utils import usable_keys
+from core.error_utils import is_retryable_error
+from api.metrics import app_metrics
+
+# A3: explicit client timeout (matches llm_service.py). Vision requests get a
+# longer ceiling than text because dense multi-screenshot batches generate
+# more tokens.
+VISION_TIMEOUT_SECONDS = 90.0
+VISION_CONNECT_TIMEOUT_SECONDS = 10.0
 
 class VisionManager:
     """Vision AI Manager for screenshot analysis and code problem solving"""
@@ -33,7 +42,11 @@ class VisionManager:
         self._request_count = 0
         
         try:
-            self.client = AsyncOpenAI(base_url=base_url, api_key=self.api_key)
+            self.client = AsyncOpenAI(
+                base_url=base_url,
+                api_key=self.api_key,
+                timeout=Timeout(VISION_TIMEOUT_SECONDS, connect=VISION_CONNECT_TIMEOUT_SECONDS),
+            )
             print(f"✅ VisionManager initialized for: {self.provider_name} - {self.model_name} ({len(self.api_keys)} keys available)")
         except Exception as e:
             self.client = None
@@ -48,8 +61,13 @@ class VisionManager:
         with self._key_lock:
             self._key_index = (self._key_index + 1) % len(self.api_keys)
             self.api_key = self.api_keys[self._key_index]
-            self.client = AsyncOpenAI(base_url=self.base_url, api_key=self.api_key)
+            self.client = AsyncOpenAI(
+                base_url=self.base_url,
+                api_key=self.api_key,
+                timeout=Timeout(VISION_TIMEOUT_SECONDS, connect=VISION_CONNECT_TIMEOUT_SECONDS),
+            )
             self._request_count += 1
+            app_metrics.inc("key_rotations")
             print(f"🔑 Vision key rotation [{self.provider_name}]: using key index {self._key_index}/{len(self.api_keys)}")
 
     def set_context_manager(self, context_manager):
@@ -160,10 +178,28 @@ class VisionManager:
                 last_error = e
                 err_str = str(e)[:100]
                 print(f"⚡ Vision key #{self._key_index} failed for {self.provider_name}: {err_str}")
-                # Continue to next key immediately — no delay
+                app_metrics.provider_error(self.provider_name)
+                # C8: rotate keys only when retrying can help; client errors
+                # (bad payload, unknown model, too many images) fail fast.
+                if not is_retryable_error(e):
+                    break
                 continue
         
-        # All keys exhausted
+        # All keys exhausted (or a non-retryable error stopped the loop)
+        if last_error is not None and not is_retryable_error(last_error):
+            self.is_healthy = False
+            self.last_error = str(last_error)
+            self.error_count += 1
+            error_msg = f"{self.provider_name} vision request failed (not retryable): {str(last_error)[:200]}"
+            print(f"🚨 VISION FAIL FAST: {self.provider_name}-{self.model_name}: {error_msg}")
+            return error_msg, {
+                "error": "non_retryable_error",
+                "detail": str(last_error)[:200],
+                "provider": self.provider_name,
+                "model": self.model_name,
+                "screenshot_count": len(screenshots)
+            }
+
         error_msg = f"All {max_attempts} vision keys failed for {self.provider_name}. Last error: {str(last_error)[:100]}"
         self.is_healthy = False
         self.last_error = str(last_error)
@@ -194,16 +230,37 @@ class VisionService:
     """Service for managing vision analysis requests and providers"""
     
     def __init__(self):
-        self.vision_managers: Dict[str, VisionManager] = {}
         self.active_vision_providers: Dict[str, VisionManager] = {}
         self.context_manager = None
+        # C10: cache the parsed ai_providers.json, invalidated by mtime.
+        # Previously every on-the-fly vision manager re-read the file from disk.
+        self._providers_cache = None
+        self._providers_cache_mtime: Optional[float] = None
+        self._providers_lock = threading.Lock()
+
+    def _load_providers_config(self):
+        """Read ai_providers.json through an mtime-checked cache."""
+        path = "ai_providers.json"
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            self._providers_cache = None
+            self._providers_cache_mtime = None
+            raise
+        with self._providers_lock:
+            if self._providers_cache is None or mtime != self._providers_cache_mtime:
+                with open(path, "rb") as f:
+                    self._providers_cache = orjson.loads(f.read())
+                self._providers_cache_mtime = mtime
+            return self._providers_cache
 
     def set_context_manager(self, context_manager):
-        """Set the shared context manager for all vision managers"""
+        """Set the shared context manager for future vision managers.
+
+        C10: the old self.vision_managers cache was always empty (managers are
+        created on demand), so there is nothing to iterate anymore.
+        """
         self.context_manager = context_manager
-        # Update all existing vision managers
-        for manager in self.vision_managers.values():
-            manager.set_context_manager(context_manager)
         
     def load_vision_providers(self, primary_config: Optional[Dict] = None, secondary_config: Optional[Dict] = None) -> bool:
         """Load active vision providers based on user selection."""
@@ -225,8 +282,7 @@ class VisionService:
     def _create_vision_manager(self, provider_name: str, model_name: str) -> Optional[VisionManager]:
         """Create and return a vision manager for a given provider and model."""
         try:
-            with open("ai_providers.json", "rb") as f:
-                providers_config = orjson.loads(f.read())
+            providers_config = self._load_providers_config()
 
             for provider_config in providers_config:
                 if provider_config["name"] == provider_name:
@@ -434,26 +490,6 @@ For EACH MCQ identified:
 - Never wrap your entire answer in ```markdown``` fences.
 """
 
-    async def get_all_vision_status(self) -> Dict[str, Dict[str, Any]]:
-        """Get status of all vision providers"""
-        status = {}
-        
-        for manager_key, manager in self.vision_managers.items():
-            try:
-                # Perform health check
-                is_healthy = await manager.health_check()
-                status[manager_key] = manager.get_status()
-                status[manager_key]["health_check_result"] = is_healthy
-            except Exception as e:
-                status[manager_key] = {
-                    "provider": manager.provider_name,
-                    "model": manager.model_name,
-                    "is_healthy": False,
-                    "error": str(e),
-                    "health_check_result": False
-                }
-        
-        return status
 
 # Global vision service instance
 vision_service = VisionService()
@@ -462,7 +498,11 @@ vision_service = VisionService()
 async def verify_vision_provider_connection(base_url: str, api_key: str, model_name: str, request_params: Optional[Dict[str, Any]] = None) -> bool:
     """Verify a vision provider connection - simplified to avoid complex vision tests"""
     try:
-        temp_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        temp_client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            timeout=Timeout(VISION_TIMEOUT_SECONDS, connect=VISION_CONNECT_TIMEOUT_SECONDS),
+        )
         
         # Just test basic connectivity with models.list() - don't do complex vision tests
         await asyncio.wait_for(temp_client.models.list(), timeout=20.0)

@@ -14,7 +14,9 @@ class LiveInterviewUI {
         this.muteButton = null;
         this.pauseButton = null;
         this.currentInterviewerElement = null; // Track interviewer message separately
+        this.currentInterimBase = ''; // M1: finalized text of the open interim message
         this.currentCandidateElement = null; // Track candidate message separately
+        this.currentCandidateInterimBase = ''; // M1: finalized text of the open candidate interim
         this.currentAIElement = null; // Track AI message separately
         this.isStreaming = false;
         this.eventsInitialized = false;
@@ -128,11 +130,17 @@ class LiveInterviewUI {
         this.scrollState.isNearBottom = currentPosition >= maxScrollTop - this.scrollState.bottomThreshold;
         
         // Track scroll direction changes
-        if (direction !== this.scrollState.lastUserScrollDirection) {
+        // U2 fix: intent decay — up-scrolls minutes apart are not intent.
+        // If the last scroll was long ago, the streak restarts.
+        const now = Date.now();
+        if (now - this.scrollState.lastUserScrollTime > 5000) {
+            this.scrollState.consecutiveUpScrolls = direction === 'up' ? 1 : 0;
+        } else if (direction !== this.scrollState.lastUserScrollDirection) {
             this.scrollState.consecutiveUpScrolls = direction === 'up' ? 1 : 0;
         } else if (direction === 'up') {
             this.scrollState.consecutiveUpScrolls++;
         }
+        this.scrollState.lastUserScrollTime = now;
         
         this.scrollState.lastUserScrollDirection = direction;
         
@@ -152,10 +160,17 @@ class LiveInterviewUI {
 
     handleWheelEvent(e) {
         // Additional intent detection: rapid up scrolls indicate reading intent
+        // U2 fix: a stale streak (last scroll >5s ago) doesn't count as intent.
         if (e.deltaY < 0) { // Scrolling up
-            this.scrollState.consecutiveUpScrolls++;
+            if (Date.now() - this.scrollState.lastUserScrollTime <= 5000) {
+                this.scrollState.consecutiveUpScrolls++;
+            } else {
+                this.scrollState.consecutiveUpScrolls = 1;
+            }
+            this.scrollState.lastUserScrollTime = Date.now();
         } else {
             this.scrollState.consecutiveUpScrolls = 0;
+            this.scrollState.lastUserScrollTime = Date.now();
         }
     }
 
@@ -362,15 +377,43 @@ class LiveInterviewUI {
             if (!this.currentInterviewerElement) {
                 this.currentInterviewerElement = this.createMessageElement('', 'interviewer');
                 this.conversationStream.appendChild(this.currentInterviewerElement);
+                this.currentInterimBase = '';
                 this.updateEmptyState();
             }
-            this.updateInterviewerMessage(this.currentInterviewerElement.querySelector('.streaming-text').textContent + ' ' + question);
+            // M1 fix: Deepgram interims are CUMULATIVE (each contains the whole
+            // utterance so far). Appending them duplicated text ("what is what
+            // is two sum two sum"). Replace the interim portion instead; only
+            // finalized pieces of this message live in currentInterimBase.
+            const content = this.currentInterimBase
+                ? this.currentInterimBase + ' ' + question
+                : question;
+            this.updateInterviewerMessage(content);
+
+            // M5 fix: if speech ends without a final result (e.g. a reconnect
+            // drops the utterance), the interim element used to stay open and
+            // the next utterance appended into it. Auto-finalize after 10s.
+            if (this.interimStaleTimer) clearTimeout(this.interimStaleTimer);
+            this.interimStaleTimer = setTimeout(() => {
+                if (this.currentInterviewerElement) {
+                    const text = this.currentInterviewerElement.querySelector('.streaming-text').textContent;
+                    this.finalizeInterviewerMessage(text);
+                }
+            }, 10000);
         } else {
+            if (this.interimStaleTimer) {
+                clearTimeout(this.interimStaleTimer);
+                this.interimStaleTimer = null;
+            }
             if (this.currentInterviewerElement) {
-                this.finalizeInterviewerMessage(question);
+                this.finalizeInterviewerMessage(
+                    this.currentInterimBase
+                        ? this.currentInterimBase + ' ' + question
+                        : question
+                );
             } else {
                 this.addMessage(question, 'interviewer');
             }
+            this.currentInterimBase = '';
             this.hideActivity();
             this.updateEmptyState();
             this.scrollState.isLiveSpeaking = false;
@@ -398,15 +441,25 @@ class LiveInterviewUI {
             if (!this.currentCandidateElement) {
                 this.currentCandidateElement = this.createMessageElement('', 'candidate');
                 this.conversationStream.appendChild(this.currentCandidateElement);
+                this.currentCandidateInterimBase = '';
                 this.updateEmptyState();
             }
-            this.updateCandidateMessage(this.currentCandidateElement.querySelector('.streaming-text').textContent + ' ' + transcript);
+            // M1 fix: interims are cumulative — replace, don't append.
+            const content = this.currentCandidateInterimBase
+                ? this.currentCandidateInterimBase + ' ' + transcript
+                : transcript;
+            this.updateCandidateMessage(content);
         } else {
             if (this.currentCandidateElement) {
-                this.finalizeCandidateMessage(transcript);
+                this.finalizeCandidateMessage(
+                    this.currentCandidateInterimBase
+                        ? this.currentCandidateInterimBase + ' ' + transcript
+                        : transcript
+                );
             } else {
                 this.addMessage(transcript, 'candidate');
             }
+            this.currentCandidateInterimBase = '';
             this.hideActivity();
             this.updateEmptyState();
             this.scrollState.isLiveSpeaking = false;
@@ -491,6 +544,7 @@ class LiveInterviewUI {
         const messageElement = this.createMessageElement(filteredContent, type);
         this.conversationStream.appendChild(messageElement);
         this.startStreaming(messageElement, filteredContent);
+        this.enforceMessageCap();
         
         // Only auto-scroll if user is near bottom, otherwise respect their position
         if (this.isUserNearBottom()) {
@@ -902,27 +956,47 @@ class LiveInterviewUI {
         }
     }
 
-    // Finalize interviewer message (for final results)
+    // U3: `autoScrollEnabled` was dead code (written in two methods, read
+    // nowhere) — removed.
     finalizeInterviewerMessage(content) {
         if (this.currentInterviewerElement) {
-            // Remove interim class to show typing animation for final result
+            // Remove interim class to show final result
             this.currentInterviewerElement.classList.remove('interim');
             
             const contentDiv = this.currentInterviewerElement.querySelector('.streaming-text');
             contentDiv.innerHTML = '';
             
-            // Use streaming module for final content
-            this.streaming.streamContent(contentDiv, content, this.streaming.config.streamingSpeed).then(() => {
-                if (this.currentInterviewerElement) {
-                    this.currentInterviewerElement.classList.add('complete');
-                }
-            });
+            // U1 fix: render finals INSTANTLY. The interim already showed the
+            // exact same text; re-animating it with the typewriter made the
+            // question visibly lag behind the speaker and re-painted every word.
+            this.streaming.displayInstantText(contentDiv, content);
+            this.currentInterviewerElement.classList.add('complete');
             
             // Clear the reference since this is final
             this.currentInterviewerElement = null;
+            this.currentInterimBase = '';
             
-            // Reset auto-scroll for new response
-            this.autoScrollEnabled = true;
+            this.enforceMessageCap();
+        }
+    }
+
+    // M3 fix: rolling DOM cap. A multi-hour interview used to accumulate
+    // thousands of message nodes — memory bloat and progressively jankier
+    // scroll/paint. Keep only the most recent MAX_DOM_MESSAGES.
+    enforceMessageCap(max = 60) {
+        if (!this.conversationStream) return;
+        const messages = this.conversationStream.querySelectorAll(':scope > .message');
+        if (messages.length <= max) return;
+        const active = new Set(
+            [this.currentInterviewerElement, this.currentCandidateElement,
+             this.currentStreamingElement, this.currentAIElement].filter(Boolean)
+        );
+        let excess = messages.length - max;
+        for (const el of messages) {
+            if (excess <= 0) break;
+            if (active.has(el)) continue; // never drop an in-flight element
+            el.remove();
+            excess--;
         }
     }
 
@@ -943,24 +1017,19 @@ class LiveInterviewUI {
     // Finalize candidate message (for final results)
     finalizeCandidateMessage(content) {
         if (this.currentCandidateElement) {
-            // Remove interim class to show typing animation for final result
+            // U1: instant render — the interim already showed this exact text
             this.currentCandidateElement.classList.remove('interim');
             
             const contentDiv = this.currentCandidateElement.querySelector('.streaming-text');
             contentDiv.innerHTML = '';
-            
-            // Use streaming module for final content
-            this.streaming.streamContent(contentDiv, content, this.streaming.config.streamingSpeed).then(() => {
-                if (this.currentCandidateElement) {
-                    this.currentCandidateElement.classList.add('complete');
-                }
-            });
+            this.streaming.displayInstantText(contentDiv, content);
+            this.currentCandidateElement.classList.add('complete');
             
             // Clear the reference since this is final
             this.currentCandidateElement = null;
+            this.currentCandidateInterimBase = '';
             
-            // Reset auto-scroll for new response
-            this.autoScrollEnabled = true;
+            this.enforceMessageCap();
         }
     }
 
@@ -1030,6 +1099,19 @@ class LiveInterviewUI {
                 block: 'start'
             });
         }
+    }
+
+    // Discard a partially-streamed answer (provider fallback took over) and
+    // prepare a clean streaming element for the replacement answer.
+    resetStreamingResponse() {
+        if (this.currentStreamingElement) {
+            this.currentStreamingElement.remove();
+            this.currentStreamingElement = null;
+            this.currentStreamingContent = null;
+        }
+        this.markdownParser.reset();
+        this.updateEmptyState();
+        console.log('🧹 Partial AI response discarded — provider fallback stream starting fresh');
     }
 
     // Start real-time streaming AI response

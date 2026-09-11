@@ -28,6 +28,7 @@ const configManager = new ConfigManager(stateManager);
 // Expose to window for inter-module integration
 window.providerManager = providerManager;
 window.configManager = configManager;
+window.wsHandler = webSocketHandler; // P4: used by Alt+G hotkey
 
 // --- Dependency Injection ---
 // Wire the managers together to avoid race conditions and reliance on globals.
@@ -148,6 +149,33 @@ async function startInterview() {
     liveInterviewUI.initialize();
     hotkeyManager.setEnabled(true);
 
+    // A4: surface device-loss events from audio_handler as visible warnings —
+    // a dead mic or stopped screen-share used to fail silently mid-interview.
+    if (!window.__deviceLossListenersAttached) {
+        window.addEventListener('superassist:device-loss', (e) => {
+            liveInterviewUI.addMessage(
+                `⚠️ ${e.detail?.device || 'Audio device'} stopped unexpectedly! Transcription may be interrupted — restart the interview or re-select your devices.`,
+                'system-error'
+            );
+        });
+        window.addEventListener('superassist:audio-suspended', () => {
+            if (!window.__backupAudioActive) {
+                liveInterviewUI.addMessage(
+                    '⚠️ Audio engine was briefly suspended by OS — attempting automatic resume...',
+                    'system-error'
+                );
+            }
+        });
+        window.addEventListener('superassist:backup-audio-started', () => {
+            window.__backupAudioActive = true;
+            liveInterviewUI.addMessage(
+                '🛡️ Backup audio engine activated — speech capture is running smoothly.',
+                'system-message'
+            );
+        });
+        window.__deviceLossListenersAttached = true;
+    }
+
     const onAudioData = (audioData, speakerHint) => {
         webSocketHandler.sendAudioChunk(audioData, muteManager.isMicrophoneMuted(), speakerHint);
     };
@@ -165,6 +193,9 @@ async function startInterview() {
 
 async function endInterview() {
     console.log('🔚 Ending interview and clearing state...');
+
+    // P3: save the turn-by-turn transcript before the session is torn down.
+    try { await webSocketHandler.exportTranscript(); } catch (e) { console.warn('Transcript export skipped:', e); }
 
     // Stop all audio processing
     stopAudioProcessing();

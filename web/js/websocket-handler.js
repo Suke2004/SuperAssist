@@ -148,6 +148,9 @@ export class WebSocketHandler {
             case 'ai_answer_chunk':
                 this.handleAiAnswerChunk(data.payload);
                 break;
+            case 'ai_answer_reset':
+                this.handleAiAnswerReset();
+                break;
             case 'ai_answer_complete':
                 this.handleAiAnswerComplete(data.payload);
                 break;
@@ -212,7 +215,17 @@ export class WebSocketHandler {
     }
 
     handleAiAnswerChunk(payload) {
+        // Reset marker from MultiLLMManager: the previous provider failed
+        // mid-stream and a fallback is about to stream a fresh answer.
+        if (payload && payload.chunk_type === 'reset') {
+            this.handleAiAnswerReset();
+            return;
+        }
         liveInterviewUI.appendStreamingChunk(payload.chunk);
+    }
+
+    handleAiAnswerReset() {
+        liveInterviewUI.resetStreamingResponse();
     }
 
     handleAiAnswerComplete(payload) {
@@ -330,6 +343,7 @@ export class WebSocketHandler {
         const initialMuteStatus = window.muteManager?.getMuteStatus() || { microphone: false, universal: false };
         
         const interviewPayload = {
+            sttLanguage: state.sttLanguage || 'en', // P1: transcription language
             aiProvider: {
                 provider: state.selectedProvider.name,
                 model: state.selectedProvider.model
@@ -357,6 +371,49 @@ export class WebSocketHandler {
     endInterview() {
         this.sendMessage('end_interview', {});
         this.disconnect();
+    }
+
+    /**
+     * P4: live toggle between full answers and quick hints (Alt+G).
+     * Sends the new mode to the session; the backend prefixes the next prompt
+     * accordingly. Returns the mode that was just activated.
+     */
+    toggleAnswerMode() {
+        this.answerModeFull = this.answerModeFull === undefined ? true : !this.answerModeFull;
+        const generateFullAnswers = this.answerModeFull;
+        this.sendMessage('config_update', { generateFullAnswers });
+        console.log(`🎯 Answer mode -> ${generateFullAnswers ? 'full answers' : 'quick hints'}`);
+        return generateFullAnswers;
+    }
+
+    /**
+     * P3: request the turn-by-turn transcript export; the backend writes a
+     * local .txt file and returns its path for a user-facing notification.
+     */
+    async exportTranscript() {
+        if (!this.session_id) {
+            console.warn('No active session to export.');
+            return null;
+        }
+        try {
+            const response = await fetch('/api/export-transcript', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: this.session_id })
+            });
+            if (!response.ok) {
+                const detail = await response.json().catch(() => ({}));
+                console.warn('Transcript export failed:', detail.detail || response.status);
+                liveInterviewUI.addMessage(`⚠️ Transcript export failed: ${detail.detail || response.statusText}`, "system-error");
+                return null;
+            }
+            const result = await response.json();
+            liveInterviewUI.addMessage(`💾 Transcript saved (${result.turns} turns): ${result.path}`, "system-message");
+            return result.path;
+        } catch (err) {
+            console.error('Transcript export error:', err);
+            return null;
+        }
     }
     
     switchPreset(presetKey) {

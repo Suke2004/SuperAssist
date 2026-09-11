@@ -2,12 +2,21 @@ import orjson
 import asyncio
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
-from openai import AsyncOpenAI, APIStatusError
+from openai import AsyncOpenAI, APIStatusError, Timeout
 from core.config import settings
 from core.key_utils import usable_keys
+from core.error_utils import is_retryable_error
+from api.metrics import app_metrics
 from core.prompts import get_interview_answer_prompt, get_quick_response_prompt
 from services.context_manager import PersistentContextManager
 import threading
+
+# A3: explicit client timeout. The OpenAI SDK default is ~600s which let a hung
+# stream stall the whole answer path for minutes. 60s is far above real
+# generation time on the supported providers (typically <5s) and bounds each
+# key-rotation attempt.
+PROVIDER_TIMEOUT_SECONDS = 60.0
+PROVIDER_CONNECT_TIMEOUT_SECONDS = 10.0
 
 # --- Enhanced LLMManager Class ---
 
@@ -36,7 +45,11 @@ class LLMManager:
         self._request_count = 0
         
         try:
-            self.client = AsyncOpenAI(base_url=base_url, api_key=self.api_key)
+            self.client = AsyncOpenAI(
+                base_url=base_url,
+                api_key=self.api_key,
+                timeout=Timeout(PROVIDER_TIMEOUT_SECONDS, connect=PROVIDER_CONNECT_TIMEOUT_SECONDS),
+            )
             print(f"✅ LLMManager initialized for: {self.provider_name} - {self.model_name} ({len(self.api_keys)} keys available)")
         except Exception as e:
             self.client = None
@@ -51,8 +64,13 @@ class LLMManager:
         with self._key_lock:
             self._key_index = (self._key_index + 1) % len(self.api_keys)
             self.api_key = self.api_keys[self._key_index]
-            self.client = AsyncOpenAI(base_url=self.base_url, api_key=self.api_key)
+            self.client = AsyncOpenAI(
+                base_url=self.base_url,
+                api_key=self.api_key,
+                timeout=Timeout(PROVIDER_TIMEOUT_SECONDS, connect=PROVIDER_CONNECT_TIMEOUT_SECONDS),
+            )
             self._request_count += 1
+            app_metrics.inc("key_rotations")
             print(f"🔑 Key rotation [{self.provider_name}]: using key index {self._key_index}/{len(self.api_keys)}")
 
     def set_context_manager(self, context_manager: PersistentContextManager):
@@ -82,7 +100,7 @@ class LLMManager:
             self.error_count += 1
             return False
 
-    async def get_ai_answer(self, question: str, stream_callback=None) -> Tuple[str, Dict[str, Any]]:
+    async def get_ai_answer(self, question: str, stream_callback=None, generate_full_answers: Optional[bool] = None) -> Tuple[str, Dict[str, Any]]:
         """Get AI answer with instant key rotation on any error — zero delay retries."""
         if not self.client:
             return "I'm sorry, the AI service is not available at this time.", {
@@ -98,24 +116,22 @@ class LLMManager:
                 "model": self.model_name
             }
         
-        # Dynamically reload prompts to ensure any prompt updates take effect immediately
-        import importlib
-        import core.prompts as prompts_module
-        try:
-            importlib.reload(prompts_module)
-        except Exception:
-            pass
+        # Determine whether to generate full answers or rapid quick response.
+        # Check explicit parameter, prompt prefix, or settings default.
+        use_full_answers = generate_full_answers if generate_full_answers is not None else settings.GENERATE_FULL_ANSWERS
+        if question.startswith("QUICK HINT MODE"):
+            use_full_answers = False
 
-        # Generate prompt with persistent context.
-        # GENERATE_FULL_ANSWERS=false routes to the short-form prompt.
-        if settings.GENERATE_FULL_ANSWERS:
-            prompt = prompts_module.get_interview_answer_prompt(question, self.context_manager)
+        if use_full_answers:
+            prompt = get_interview_answer_prompt(question, self.context_manager)
         else:
-            prompt = prompts_module.get_quick_response_prompt(question, self.context_manager)
+            prompt = get_quick_response_prompt(question, self.context_manager)
         
         print(f"🎯 Processing with {self.provider_name}-{self.model_name}: '{question[:100]}...'")
         
-        # Try all available keys — instant retry on any error
+        # Try all available keys — instant retry on retryable errors only (C8).
+        # A 400-class failure (e.g. prompt too long with a big resume) fails
+        # identically on every key, so fail fast and surface the real error.
         max_attempts = len(self.api_keys)
         last_error = None
         
@@ -199,10 +215,27 @@ class LLMManager:
                 last_error = e
                 err_str = str(e)[:100]
                 print(f"⚡ Key #{self._key_index} failed for {self.provider_name}: {err_str}")
-                # Continue to next key immediately — no delay
+                app_metrics.provider_error(self.provider_name)
+                # C8: only rotate to the next key when retrying can help
+                # (auth/rate-limit/5xx/network). Client errors fail fast.
+                if not is_retryable_error(e):
+                    break
                 continue
         
-        # All keys exhausted
+        # All keys exhausted (or a non-retryable error stopped the loop)
+        if last_error is not None and not is_retryable_error(last_error):
+            self.is_healthy = False
+            self.last_error = str(last_error)
+            self.error_count += 1
+            error_msg = f"{self.provider_name} request failed (not retryable): {str(last_error)[:200]}"
+            print(f"🚨 FAIL FAST: {self.provider_name}-{self.model_name}: {error_msg}")
+            return error_msg, {
+                "error": "non_retryable_error",
+                "detail": str(last_error)[:200],
+                "provider": self.provider_name,
+                "model": self.model_name
+            }
+
         error_msg = f"All {max_attempts} keys failed for {self.provider_name}. Last error: {str(last_error)[:100]}"
         self.is_healthy = False
         self.last_error = str(last_error)
@@ -437,15 +470,26 @@ class MultiLLMManager:
             }
         return {"key": "unknown", "provider": "Unknown", "model": "Unknown", "description": "Unknown"}
 
-    async def get_ai_answer(self, question: str, stream_callback=None) -> Tuple[str, Dict[str, Any]]:
-        """Get AI answer with automatic fallback and error recovery, with optional streaming"""
+    async def get_ai_answer(self, question: str, stream_callback=None, generate_full_answers: Optional[bool] = None) -> Tuple[str, Dict[str, Any]]:
+        """Get AI answer with automatic fallback and error recovery, with optional streaming
+
+        A4: when the active provider fails mid-stream and a fallback takes over,
+        an ``ai_answer_reset`` message is emitted first so the frontend clears
+        the partially-streamed answer instead of concatenating two answers.
+        """
         if not self.providers:
             return "No AI providers are configured.", {"error": "no_providers"}
         
+        async def _call_manager(mgr):
+            try:
+                return await mgr.get_ai_answer(question, stream_callback, generate_full_answers=generate_full_answers)
+            except TypeError:
+                return await mgr.get_ai_answer(question, stream_callback)
+
         # Try the active provider first
         if self.active_preset_key in self.providers:
             manager = self.providers[self.active_preset_key]
-            answer, result_info = await manager.get_ai_answer(question, stream_callback)
+            answer, result_info = await _call_manager(manager)
             
             # If successful, return the answer
             if result_info.get("success"):
@@ -459,10 +503,20 @@ class MultiLLMManager:
         for fallback_preset in self.fallback_order:
             if fallback_preset != self.active_preset_key and fallback_preset in self.providers:
                 print(f"🔄 Attempting fallback to {fallback_preset}...")
+                app_metrics.inc("fallbacks_used")
+                
+                # A4: tell the frontend to discard any partial answer already
+                # streamed by the failed provider, then continue streaming the
+                # fallback's answer into a clean element.
+                if stream_callback is not None:
+                    try:
+                        await stream_callback("", "reset")
+                    except Exception:
+                        pass
                 
                 manager = self.providers[fallback_preset]
                 # Pass stream_callback so fallback streams directly to frontend HUD
-                answer, result_info = await manager.get_ai_answer(question, stream_callback)
+                answer, result_info = await _call_manager(manager)
                 
                 if result_info.get("success"):
                     # Update active preset to the working one
@@ -517,7 +571,11 @@ class MultiLLMManager:
 async def verify_provider_connection(base_url: str, api_key: str, model_name: str) -> bool:
     """Verifies a connection to an AI provider without creating a full manager instance."""
     try:
-        temp_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        temp_client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            timeout=Timeout(PROVIDER_TIMEOUT_SECONDS, connect=PROVIDER_CONNECT_TIMEOUT_SECONDS),
+        )
         await asyncio.wait_for(temp_client.models.list(), timeout=20.0)
         print(f"✅ Connection to {base_url} with model {model_name} is valid.")
         return True

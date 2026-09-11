@@ -3,6 +3,7 @@
 
 import { devLog } from './config.js';
 import muteManager from './mute-manager.js';
+import liveInterviewUI from './live-interview.js';
 
 class HotkeyManager {
     constructor() {
@@ -21,9 +22,9 @@ class HotkeyManager {
         
         // Prevent default browser shortcuts that might interfere
         document.addEventListener('keydown', (e) => {
-            // Prevent default browser actions for Alt+[, Alt+], Alt+,, and Alt+.
+            // Prevent default browser actions for Alt+[, Alt+], Alt+,, Alt+., and Alt+G
             // Note: Alt+M and Alt+U are handled by global hotkeys only
-            if (e.altKey && ['[', ']', ',', '.'].includes(e.key.toLowerCase())) {
+            if (e.altKey && ['[', ']', ',', '.', 'g'].includes(e.key.toLowerCase())) {
                 e.preventDefault();
             }
         });
@@ -44,6 +45,18 @@ class HotkeyManager {
         if (event.altKey && event.key === ']') {
             this.increaseTransparency();
             return;
+        }
+
+        // P4: Alt+G toggles full answers <-> quick hints mid-interview.
+        if (event.altKey && event.key.toLowerCase() === 'g') {
+            event.preventDefault();
+            if (window.wsHandler && typeof window.wsHandler.toggleAnswerMode === 'function') {
+                const fullMode = window.wsHandler.toggleAnswerMode();
+                liveInterviewUI.addMessage(
+                    fullMode ? '🎯 Answer mode: FULL answers' : '⚡ Answer mode: QUICK hints',
+                    'system-message'
+                );
+            }
         }
     }
 

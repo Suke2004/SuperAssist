@@ -28,11 +28,12 @@ import orjson
 import uvicorn
 import webview
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import window_manager  # Our new module for capture protection
 from api import websocket, config_api
+from api.metrics import app_metrics, APP_VERSION
 from api.session_manager import session_manager
 from core.config import settings, print_config_debug
 
@@ -263,6 +264,24 @@ app = FastAPI()
 app.include_router(websocket.router)
 app.include_router(config_api.router)
 
+# --- Health & Metrics endpoints (local-only server; payloads carry no secrets) ---
+@app.get("/api/health")
+async def health():
+    """Liveness summary for the local desktop client."""
+    return {
+        "status": "ok",
+        "version": APP_VERSION,
+        "uptime_s": app_metrics.snapshot()["uptime_s"],
+        "active_sessions": len(session_manager.active_sessions),
+    }
+
+@app.get("/api/metrics")
+async def metrics():
+    """Counters and answer-latency percentiles. No keys or transcripts."""
+    snapshot = app_metrics.snapshot()
+    snapshot["active_sessions"] = len(session_manager.active_sessions)
+    return JSONResponse(content=snapshot)
+
 # Mount the 'web' directory to serve static files (CSS, JS)
 # This makes files in 'web/css' and 'web/js' available under '/static/css' and '/static/js'
 app.mount("/static", StaticFiles(directory="web"), name="static")
@@ -284,7 +303,13 @@ class UvicornServer:
         self.server_task = None
         
     async def start(self):
-        """Start the Uvicorn server as an asyncio task"""
+        """Start the Uvicorn server as an asyncio task and wait until it is bound.
+
+        C9: previously start() returned immediately and main() guessed readiness
+        with a blind sleep(2), which intermittently showed the webview a
+        connection-refused page on slower machines. Polling uvicorn's own
+        ``started`` flag removes the guesswork.
+        """
         config = uvicorn.Config(
             app=self.app,
             host=self.host,
@@ -294,6 +319,18 @@ class UvicornServer:
         )
         self.server = uvicorn.Server(config)
         self.server_task = asyncio.create_task(self.server.serve())
+
+        # Wait for the socket to actually be bound (uvicorn sets .started).
+        for _ in range(100):  # up to 10s
+            if self.server.started:
+                break
+            if self.server_task.done():
+                # Server crashed during startup (e.g. port stolen by a racer)
+                raise RuntimeError("Uvicorn server failed during startup")
+            await asyncio.sleep(0.1)
+        else:
+            raise RuntimeError("Uvicorn server did not bind within 10 seconds")
+
         print(f"🚀 Uvicorn server started on {self.host}:{self.port}")
         
     async def stop(self):
@@ -508,11 +545,10 @@ def main():
     print("   📋 Architecture: pywebview on main thread, asyncio services in background thread")
     
     try:
-        # Start the asyncio services in background thread
+        # Start the asyncio services in background thread.
+        # C9: no blind sleep(2) here anymore — the services thread now waits
+        # for uvicorn's socket to be bound before the webview URL is loaded.
         asyncio_service_thread.start()
-        
-        # Give the server a moment to start
-        time.sleep(2)
         
         # Setup and run webview on main thread (required by pywebview)
         window = setup_webview_window()

@@ -13,6 +13,15 @@ let micStream = null;
 let systemStream = null;
 let micGainNode = null;
 let screenVideoTrack = null; // Store video track for screenshot reuse
+let keepAliveGain = null;
+let keepAliveOsc = null;
+
+// Backup Audio Engine state
+let backupContext = null;
+let backupProcessor = null;
+let backupActive = false;
+let lastChunkTimestamp = 0;
+let lastSuspensionWarningTime = 0;
 
 /**
  * Requests permission to use the microphone and populates the dropdown.
@@ -106,16 +115,48 @@ export async function startAudioProcessing(micId, onAudioData) {
         if (audioContext.sampleRate !== TARGET_SAMPLE_RATE) {
             console.warn(`⚠️ AudioContext is ${audioContext.sampleRate}Hz but Deepgram expects ${TARGET_SAMPLE_RATE}Hz - transcription accuracy may suffer`);
         }
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume().catch(() => {});
+        }
         await audioContext.audioWorklet.addModule('/static/js/audio_processor.js');
         
-        // 3. Create a single mixed processor with 2 inputs (input 0: mic, input 1: system)
+        // 3. Create a mixed processor with 2 inputs and 1 output for keepalive connection
         const mixedProcessor = new AudioWorkletNode(audioContext, 'mixed-processor', {
             numberOfInputs: 2,
-            numberOfOutputs: 0
+            numberOfOutputs: 1
         });
+
+        // Anti-suspension pipeline: Connect mixedProcessor through a 0-gain node to destination.
+        // Modern Chromium/WebView2 automatically suspends an AudioContext if it has no active path
+        // to destination. A silent 0-gain connection keeps the audio engine rendering continuously.
+        keepAliveGain = audioContext.createGain();
+        keepAliveGain.gain.value = 0;
+        mixedProcessor.connect(keepAliveGain);
+        keepAliveGain.connect(audioContext.destination);
+
+        // Silent keep-alive oscillator guarantees the Web Audio hardware clock never idles
+        try {
+            keepAliveOsc = audioContext.createOscillator();
+            keepAliveOsc.connect(keepAliveGain);
+            keepAliveOsc.start();
+        } catch (e) {
+            console.warn('Silent keepalive oscillator skipped:', e);
+        }
 
         // Handle mixed audio with mute-aware speaker detection
         let audioProcessingCounter = 0; // For throttled logging
+
+        // A2: echo guard — interviewer audio leaking through the speakers into
+        // the mic used to be labeled 'microphone' when micLevel beat its gate,
+        // sending interviewer speech into candidate-response tracking. If the
+        // system stream is clearly active, the mic signal is suspect: only call
+        // it 'microphone' when the mic is decisively louder.
+        const echoGuard = (micLevel, systemLevel) => {
+            if (systemLevel > 0.003 && micLevel < systemLevel * 2.5) {
+                return 'system';
+            }
+            return null; // no echo suspicion, let normal classification decide
+        };
         
         mixedProcessor.port.onmessage = (event) => {
             // If universally muted, drop all audio data immediately.
@@ -137,18 +178,24 @@ export async function startAudioProcessing(micId, onAudioData) {
                     return;
                 }
                 speakerHint = 'system';
-            } else if (systemLevel > 0.003 && systemLevel >= micLevel * 0.7) {
-                // Digital interviewer audio active
-                speakerHint = 'system';
-            } else if (micLevel > 0.005 && micLevel > systemLevel * 1.2) {
-                // Candidate speaking
-                speakerHint = 'microphone';
             } else {
-                // Default based on active audio energy
-                speakerHint = systemLevel > 0.002 ? 'system' : 'microphone';
+                const echoVerdict = echoGuard(micLevel, systemLevel);
+                if (echoVerdict) {
+                    speakerHint = echoVerdict;
+                } else if (systemLevel > 0.003 && systemLevel >= micLevel * 0.7) {
+                    // Digital interviewer audio active
+                    speakerHint = 'system';
+                } else if (micLevel > 0.005 && micLevel > systemLevel * 1.2) {
+                    // Candidate speaking
+                    speakerHint = 'microphone';
+                } else {
+                    // Default based on active audio energy
+                    speakerHint = systemLevel > 0.002 ? 'system' : 'microphone';
+                }
             }
 
             audioProcessingCounter++;
+            lastChunkTimestamp = Date.now();
             onAudioData(audioData, speakerHint);
         };
 
@@ -189,6 +236,60 @@ export async function startAudioProcessing(micId, onAudioData) {
         }
 
         devLog("✅ Audio processing started successfully");
+
+        // A4: device-loss watchdog — an unplugged mic or a stopped screen-share
+        // used to die silently; transcription and screenshots just stopped with
+        // no signal. Surface it so the user can re-acquire before losing more
+        // of the interview.
+        const notifyDeviceLoss = (what) => {
+            console.warn(`⚠️ ${what} ended unexpectedly!`);
+            window.dispatchEvent(new CustomEvent('superassist:device-loss', {
+                detail: { device: what }
+            }));
+        };
+        if (micStream) {
+            micStream.getAudioTracks().forEach(track => {
+                track.addEventListener('ended', () => notifyDeviceLoss('Microphone'));
+            });
+        }
+        if (systemStream) {
+            systemStream.getAudioTracks().forEach(track => {
+                track.addEventListener('ended', () => notifyDeviceLoss('Screen share audio'));
+            });
+            systemStream.getVideoTracks().forEach(track => {
+                track.addEventListener('ended', () => notifyDeviceLoss('Screen share'));
+            });
+        }
+
+        // Initialize heartbeat timestamp
+        lastChunkTimestamp = Date.now();
+
+        // A5: AudioContext watchdog & automatic backup engine failover:
+        // 1. Resumes context if suspended by OS or audio device switch.
+        // 2. Throttles user-facing warnings so UI isn't spammed every few seconds.
+        // 3. If primary worklet stalls (>4s without chunks), automatically activates
+        //    the backup audio engine (ScriptProcessor pipeline) so no speech is missed.
+        audioContext._watchdog = setInterval(() => {
+            const now = Date.now();
+            const isPaused = muteManager.isAudioPaused();
+
+            // Check suspension
+            if (audioContext && audioContext.state === 'suspended') {
+                console.warn('⚠️ AudioContext suspended — attempting resume...');
+                audioContext.resume().catch(() => {});
+                if (now - lastSuspensionWarningTime > 30000 && !backupActive) {
+                    lastSuspensionWarningTime = now;
+                    window.dispatchEvent(new CustomEvent('superassist:audio-suspended'));
+                }
+            }
+
+            // Stall detection: if unmuted and no chunks received for > 4s, activate backup
+            if (!isPaused && (now - lastChunkTimestamp > 4000) && !backupActive) {
+                console.warn('⚠️ Primary audio engine stalled (>4s without audio) — activating backup audio engine...');
+                startBackupAudioEngine(micStream, systemStream, onAudioData);
+            }
+        }, 2500);
+
         return true;
 
     } catch (err) {
@@ -276,6 +377,107 @@ export function isScreenSharingAvailable() {
 }
 
 /**
+ * Backup Audio Engine (ScriptProcessor pipeline)
+ * Activates automatically if the primary AudioWorklet stalls or suspends unexpectedly.
+ */
+function startBackupAudioEngine(micStream, systemStream, onAudioData) {
+    if (backupActive) return;
+    backupActive = true;
+    console.warn("🛡️ Starting Backup Audio Engine (fallback pipeline)...");
+
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        backupContext = new AudioCtx();
+        backupContext.resume().catch(() => {});
+
+        const bufferSize = 1024;
+        // 2 inputs (mic, system), 1 output
+        backupProcessor = backupContext.createScriptProcessor(bufferSize, 2, 1);
+
+        const merger = backupContext.createChannelMerger(2);
+
+        if (micStream && micStream.getAudioTracks().length > 0) {
+            const micSrc = backupContext.createMediaStreamSource(micStream);
+            micSrc.connect(merger, 0, 0);
+        }
+
+        if (systemStream && systemStream.getAudioTracks().length > 0) {
+            const sysSrc = backupContext.createMediaStreamSource(systemStream);
+            sysSrc.connect(merger, 0, 1);
+        }
+
+        merger.connect(backupProcessor);
+
+        // Keepalive silent output to destination
+        const backupSilentGain = backupContext.createGain();
+        backupSilentGain.gain.value = 0;
+        backupProcessor.connect(backupSilentGain);
+        backupSilentGain.connect(backupContext.destination);
+
+        backupProcessor.onaudioprocess = (e) => {
+            if (muteManager.isAudioPaused()) return;
+
+            const inputBuffer = e.inputBuffer;
+            const micData = inputBuffer.getChannelData(0);
+            const sysData = inputBuffer.numberOfChannels > 1 ? inputBuffer.getChannelData(1) : null;
+            const len = inputBuffer.length;
+
+            let micEnergy = 0;
+            let sysEnergy = 0;
+            for (let i = 0; i < len; i++) {
+                micEnergy += micData[i] * micData[i];
+                if (sysData) sysEnergy += sysData[i] * sysData[i];
+            }
+            const micRMS = Math.sqrt(micEnergy / (len || 1));
+            const sysRMS = sysData ? Math.sqrt(sysEnergy / (len || 1)) : 0;
+
+            const isMuted = muteManager.isMicrophoneMuted();
+            const micGain = isMuted ? 0 : 1.0;
+
+            // Convert to 16-bit PCM buffer
+            const pcmBuffer = new Int16Array(len);
+            for (let i = 0; i < len; i++) {
+                const micSample = micData[i] * micGain;
+                const sysSample = sysData ? sysData[i] : 0;
+                let mixed;
+                if (sysRMS > 0.003 && micRMS > 0.01) {
+                    mixed = sysSample + micSample * 0.12;
+                } else if (sysRMS > 0.002) {
+                    mixed = sysSample + micSample * 0.1;
+                } else {
+                    mixed = micSample;
+                }
+                if (mixed > 1.0) mixed = 1.0;
+                else if (mixed < -1.0) mixed = -1.0;
+
+                const s = Math.fround(mixed);
+                pcmBuffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+
+            let speakerHint = 'microphone';
+            if (isMuted) {
+                if (sysRMS < 0.002) return;
+                speakerHint = 'system';
+            } else if (sysRMS > 0.003 && sysRMS >= micRMS * 0.7) {
+                speakerHint = 'system';
+            } else if (micRMS > 0.005 && micRMS > sysRMS * 1.2) {
+                speakerHint = 'microphone';
+            } else {
+                speakerHint = sysRMS > 0.002 ? 'system' : 'microphone';
+            }
+
+            lastChunkTimestamp = Date.now();
+            onAudioData(pcmBuffer.buffer, speakerHint);
+        };
+
+        window.dispatchEvent(new CustomEvent('superassist:backup-audio-started'));
+        console.log("✅ Backup Audio Engine running and streaming PCM chunks successfully");
+    } catch (err) {
+        console.error("❌ Failed to start Backup Audio Engine:", err);
+    }
+}
+
+/**
  * Stops all audio streams and closes the AudioContext.
  */
 export function stopAudioProcessing() {
@@ -293,7 +495,29 @@ export function stopAudioProcessing() {
         screenVideoTrack = null;
         console.log("📹 Screen video track stopped");
     }
+    if (keepAliveOsc) {
+        try { keepAliveOsc.stop(); keepAliveOsc.disconnect(); } catch (e) {}
+        keepAliveOsc = null;
+    }
+    if (keepAliveGain) {
+        try { keepAliveGain.disconnect(); } catch (e) {}
+        keepAliveGain = null;
+    }
+    if (backupProcessor) {
+        try { backupProcessor.disconnect(); } catch (e) {}
+        backupProcessor = null;
+    }
+    if (backupContext && backupContext.state !== 'closed') {
+        try { backupContext.close(); } catch (e) {}
+        backupContext = null;
+    }
+    backupActive = false;
+
     if (audioContext && audioContext.state !== 'closed') {
+        if (audioContext._watchdog) {
+            clearInterval(audioContext._watchdog);
+            audioContext._watchdog = null;
+        }
         audioContext.close();
         audioContext = null;
     }
