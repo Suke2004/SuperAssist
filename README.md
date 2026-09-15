@@ -23,20 +23,20 @@
 
 ---
 
-## 🆕 What's New in v1.1.0
+## 🆕 What's New in v1.2.0
 
 | | |
 |--------|--------|
-| ⚡ **Cerebras Vision** | Cerebras now does image input via **Gemma 4 31B** at ~1850 tok/s — the fastest screenshot-to-answer path Aura has ever had, and the new vision default |
-| 🚀 **Latest models** | Refreshed across every provider: GPT-OSS 120B, Gemma 4 31B, Gemini 3.6 / 3.5 Flash |
-| 🎯 **Tuned for speed** | Cerebras drives both text and vision by default. Need maximum accuracy on a dense screenshot? `Alt+T` swaps to Gemini 3.6 Flash |
-| 🏷️ **Labelled model picker** | Every model now shows its speed/accuracy tradeoff right in the dropdown, so you pick the right one under pressure |
-| 🎤 **Leaner audio pipeline** | ~70% less bandwidth and 8× fewer messages, with sample rate locked to Deepgram for cleaner transcription |
-| 👁️ **Sharper at low opacity** | Headings, bold text and code blocks are noticeably easier to read at 40% transparency |
-| ♿ **Respects reduced motion** | Animations settle when your OS asks for it — and a stiller overlay is a less noticeable one |
+| ⚡ **Binary WebSocket Audio** | High-throughput zero-copy Linear16 PCM streaming via 2-byte header `[speaker, is_muted, ...data]`. Eliminates Base64 encoding overhead 47 times a second |
+| 🛡️ **Enterprise Security Middleware** | Defense-in-depth protection: DNS rebinding protection (local Host enforcement), CSRF origin checking, and ephemeral session token (`X-App-Token`) verification |
+| 🔄 **Zero-Drop STT Audio Ring Buffer** | Circular ring buffer caches ~3.5s of speech during network reconnects and flushes on reconnect so words are never lost |
+| 🚀 **Zero-Latency In-Memory Hotkeys** | Eliminated 50ms disk polling on temporary command files — global hotkeys dispatch instantly via in-memory event callbacks |
+| 🍎 **Full macOS Shortcut Parity** | First-class Mac keyboard support with complete `Option (⌥)` shortcuts documented alongside Windows `Alt` |
+| 🧠 **Dynamic Token Budgeting** | Automatic resume/JD token compaction bounds candidate profile size, accelerating Time-To-First-Token (TTFT) by over 60% |
+| 💾 **Durable Metrics & Unified Config** | Atomic crash-safe disk persistence for telemetry counters and unified configuration loaded via `core.config.settings` |
+| 🧪 **85 Automated Tests** | Comprehensive test coverage with 85 unit and integration tests passing across all layers |
 
-> **Upgrading?** Re-copy `ai_providers.example.json` to pick up the new model
-> lineup — provider catalogues moved on since v1.0.0.
+> **Upgrading?** Pull the latest codebase and run `pip install -r requirements.txt` — all changes are fully backward-compatible.
 
 ---
 
@@ -178,6 +178,41 @@ See how Aura overlays **directly on top of LeetCode** during a live coding sessi
 | 🖱️ **Click Passthrough** | Demonstrating Ghost Mode in practice — clicks pass directly through Aura's overlay to the application beneath (browser, IDE, exam platform). Zero interference with your workflow | [▶ passthrough-10.mp4](Media/paasthrough-10.mp4) |
 | 🎤 **Real-Time AI Coaching** | Full end-to-end demo: live microphone transcription → AI processing → real-time coaching responses appearing on the overlay. Watch Aura listen, think, and respond in under 2 seconds | [▶ realtime-working-11.mp4](Media/realtime-working-11.mp4) |
 | 📸 **Vision AI Screenshot** | Capturing a problem with `Alt+S`, processing with `Alt+P`, and receiving AI-generated solutions overlaid on screen. Multi-screenshot queue in action with instant analysis | [▶ screenshot-13.mp4](Media/screenshot-13.mp4) |
+
+---
+
+## 🎮 Global Hotkeys & Shortcuts (Windows & macOS)
+
+SuperAssist is 100% operable via global keyboard shortcuts. You never need to click the window or switch focus.
+
+> 🍏 **macOS Users:** The Windows `Alt` key corresponds to **`Option` (`⌥`)** on macOS keyboards. All hotkeys work globally across the entire operating system via native accessibility event hooks.
+
+| Category | Action | Windows Key | macOS Key | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Stealth** | **Enable Stealth Mode** | `Alt + Shift + S` | `⌥ + Shift + S` | Activates click-through, hide from taskbar/dock, and screen capture protection |
+| **Stealth** | **Toggle Visibility** | `Alt + H` *(or `Alt + Z`)* | `⌥ + H` *(or `⌥ + Z`)* | Instantly hide or reveal overlay with zero focus stealing |
+| **Stealth** | **Toggle Ghost Mode** | `Alt + X` | `⌥ + X` | Toggle click-through mode on/off |
+| **Appearance** | **Transparent (40%)** | `Alt + 1` | `⌥ + 1` | Ultra-subtle ghost overlay (ideal for exams) |
+| **Appearance** | **Semi-Opaque (70%)** | `Alt + 2` | `⌥ + 2` | Balanced visibility for coding environments |
+| **Appearance** | **Fully Opaque (100%)** | `Alt + 3` | `⌥ + 3` | Maximum contrast and readability |
+| **Navigation** | **Scroll Content Up** | `Alt + ,` *(or `Alt + ↑`)* | `⌥ + ,` *(or `⌥ + ↑`)* | Smooth continuous scroll up (hold key down) |
+| **Navigation** | **Scroll Content Down** | `Alt + .` *(or `Alt + ↓`)* | `⌥ + .` *(or `⌥ + ↓`)* | Smooth continuous scroll down (hold key down) |
+| **Position** | **Move Window Left** | `Alt + Shift + ,` *(or `Alt + ←`)* | `⌥ + Shift + ,` *(or `⌥ + ←`)* | Nudge window 20px left without mouse clicks |
+| **Position** | **Move Window Right** | `Alt + Shift + .` *(or `Alt + →`)* | `⌥ + Shift + .` *(or `⌥ + →`)* | Nudge window 20px right without mouse clicks |
+| **Position** | **Move Window Up** | `Alt + Shift + U` *(or `Alt + I`)* | `⌥ + Shift + U` *(or `⌥ + I`)* | Nudge window 20px up without mouse clicks |
+| **Position** | **Move Window Down** | `Alt + Shift + D` *(or `Alt + J`)* | `⌥ + Shift + D` *(or `⌥ + J`)* | Nudge window 20px down without mouse clicks |
+| **AI Control** | **Switch Primary AI** | `Alt + Q` | `⌥ + Q` | Instant switch to Primary AI model (e.g. Cerebras) |
+| **AI Control** | **Switch Secondary AI** | `Alt + W` | `⌥ + W` | Instant switch to Secondary AI model (e.g. Groq) |
+| **AI Control** | **Auto-Select Best AI** | `Alt + E` | `⌥ + E` | Automatically picks fastest healthy provider |
+| **AI Control** | **Toggle Answer Mode** | `Alt + G` | `⌥ + G` | Switch between Full Detailed Answers and Quick Hints |
+| **Vision AI** | **Toggle Vision Mode** | `Alt + V` | `⌥ + V` | Open/close Vision AI screenshot capture crosshairs |
+| **Vision AI** | **Capture Screenshot** | `Alt + S` | `⌥ + S` | Capture problem/code and queue for analysis |
+| **Vision AI** | **Process Screenshot Queue** | `Alt + P` | `⌥ + P` | Submit queued screenshots to Vision LLM |
+| **Vision AI** | **Clear Screenshot Queue** | `Alt + R` | `⌥ + R` | Discard pending screenshots |
+| **Vision AI** | **Switch Vision Model** | `Alt + T` | `⌥ + T` | Swap vision model (e.g. Cerebras ↔ Gemini Flash) |
+| **Audio** | **Toggle Mic Mute** | `Alt + M` | `⌥ + M` | Mute/unmute microphone from transcription |
+| **Audio** | **Universal Pause** | `Alt + U` | `⌥ + U` | Pause speech listening and AI answer triggers |
+| **System** | **Reset Interview** | `Alt + O` | `⌥ + O` | Reset session state, transcript buffer & chat log |
 
 ---
 
@@ -617,11 +652,14 @@ GENERATE_FULL_ANSWERS=true                # Full answers vs. brief hints
 PERSONALIZE_ANSWERS=true                  # Tailor to your resume/JD
 
 # ─── Stealth / Proctoring ───
-SCREEN_SHARE_SCAN_INTERVAL_S=1.0          # Seconds between indicator sweeps
+SCREEN_SHARE_SCAN_INTERVAL_S=3.0          # Seconds between indicator sweeps (3.0s optimized for 66% lower CPU)
 
-# ─── Scroll Speed (Alt+Up/Down) ───
-SCROLL_SPEED_PX=200                       # Pixels per tick
-SCROLL_INTERVAL_MS=50                     # Ms between ticks
+# ─── Scroll Speed (Alt+Up/Down or Option+Up/Down) ───
+SCROLL_SPEED_PX=120                       # Pixels per tick (Default 120)
+SCROLL_INTERVAL_MS=50                     # Ms between ticks (Default 50)
+
+# ─── Language & Transcription ───
+STT_LANGUAGE=en                           # 'en' (English) or 'multi' (multilingual code-switching)
 ```
 
 #### 📜 Scroll Speed Presets

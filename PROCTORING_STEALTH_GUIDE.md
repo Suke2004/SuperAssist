@@ -80,39 +80,36 @@ Proctoring platforms like **Proctorio**, **Honorlock**, **ExamSoft**, **Respondu
 - **Never maximize/minimize** the AI window manually
 - **AVOID Alt+X during sessions** - Can accidentally disable ghost mode and make window clickable
 
-## 🎮 Complete Hotkey Reference
+## 🎮 Complete Cross-Platform Hotkey Reference
 
-### Window Management
-- `Alt+Shift+S` - **Enable proctoring stealth mode** (one-time setup)
-- `Alt+H` - Toggle visibility (stealth - no focus change, safe from VS Code wrap)
-- `Alt+X` - Toggle ghost mode (click-through)
-- `Alt+Shift+,` / `Alt+Shift+.` - Move window left / right (stealth, 20px)
-- `Alt+Shift+U` - Move window up (stealth, 20px)
-- `Alt+Shift+D` - Move window down (stealth, 20px)
+> **macOS Note:** On macOS keyboards, the `Alt` key corresponds to **`Option` (`⌥`)**. Use `Option` wherever `Alt` is listed. Global hotkeys run through native macOS Accessibility events via `pynput`.
 
-### Scrolling (No Arrow Keys)
-- `Alt+,` (Comma) - Continuous scroll up (hold to keep scrolling, release to stop)
-- `Alt+.` (Period) - Continuous scroll down (hold to keep scrolling, release to stop)
-
-### Transparency Control  
-- `Alt+1` - Transparent (40% opacity) - best for exams
-- `Alt+2` - Semi-transparent (70% opacity) - balanced
-- `Alt+3` - Opaque (100% opacity) - full visibility
-
-### AI Features
-- `Alt+Q` - Switch to primary AI preset
-- `Alt+W` - Switch to secondary AI preset
-- `Alt+E` - Auto-select best AI preset
-- `Alt+V` - Toggle vision mode
-- `Alt+S` - Capture screenshot
-- `Alt+P` - Process screenshots with AI
-- `Alt+R` - Reset screenshot queue
-- `Alt+O` - **Reset interview session** (stealth)
-- `Alt+T` - Switch vision model
-
-### Audio Control
-- `Alt+M` - Toggle microphone mute
-- `Alt+U` - Toggle universal mute (pause)
+| Action | Windows Shortcut | macOS Shortcut | Category | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Enable Stealth Mode** | `Alt + Shift + S` | `⌥ + Shift + S` | Stealth | Activates click-through, transparency & capture exclusion |
+| **Toggle Visibility** | `Alt + H` *(or `Alt + Z`)* | `⌥ + H` *(or `⌥ + Z`)* | Stealth | Show/hide overlay with zero focus stealing |
+| **Toggle Ghost Mode** | `Alt + X` | `⌥ + X` | Stealth | Toggle click-through on/off |
+| **Transparency (40%)** | `Alt + 1` | `⌥ + 1` | Appearance | Near-invisible ghost mode (best for exams) |
+| **Transparency (70%)** | `Alt + 2` | `⌥ + 2` | Appearance | Semi-transparent (balanced visibility) |
+| **Transparency (100%)** | `Alt + 3` | `⌥ + 3` | Appearance | Fully opaque (maximum readability) |
+| **Scroll Up** | `Alt + ,` *(or `Alt + ↑`)* | `⌥ + ,` *(or `⌥ + ↑`)* | Navigation | Continuous smooth scroll up (hold to scroll) |
+| **Scroll Down** | `Alt + .` *(or `Alt + ↓`)* | `⌥ + .` *(or `⌥ + ↓`)* | Navigation | Continuous smooth scroll down (hold to scroll) |
+| **Move Window Left** | `Alt + Shift + ,` *(or `Alt + ←`)* | `⌥ + Shift + ,` *(or `⌥ + ←`)* | Position | Shift overlay 20px left without mouse focus |
+| **Move Window Right** | `Alt + Shift + .` *(or `Alt + →`)* | `⌥ + Shift + .` *(or `⌥ + →`)* | Position | Shift overlay 20px right without mouse focus |
+| **Move Window Up** | `Alt + Shift + U` *(or `Alt + I`)* | `⌥ + Shift + U` *(or `⌥ + I`)* | Position | Shift overlay 20px up without mouse focus |
+| **Move Window Down** | `Alt + Shift + D` *(or `Alt + J`)* | `⌥ + Shift + D` *(or `⌥ + J`)* | Position | Shift overlay 20px down without mouse focus |
+| **Primary AI Preset** | `Alt + Q` | `⌥ + Q` | AI Control | Instant switch to Primary AI model (e.g. Cerebras) |
+| **Secondary AI Preset**| `Alt + W` | `⌥ + W` | AI Control | Instant switch to Secondary AI model (e.g. Groq) |
+| **Auto-Select AI** | `Alt + E` | `⌥ + E` | AI Control | Auto-select best/fastest healthy provider |
+| **Toggle Vision Mode** | `Alt + V` | `⌥ + V` | Vision AI | Open/close Vision AI screenshot capture overlay |
+| **Capture Screenshot** | `Alt + S` | `⌥ + S` | Vision AI | Capture current screen and add to processing queue |
+| **Process Screenshots**| `Alt + P` | `⌥ + P` | Vision AI | Send queued screenshots to Vision LLM for analysis |
+| **Clear Screenshot Queue**| `Alt + R` | `⌥ + R` | Vision AI | Clear pending screenshot queue |
+| **Switch Vision Model** | `Alt + T` | `⌥ + T` | Vision AI | Switch active Vision model (e.g. Cerebras ↔ Gemini) |
+| **Toggle Answer Mode** | `Alt + G` | `⌥ + G` | AI Control | Toggle between Full Solutions and Concise Quick Hints |
+| **Toggle Mic Mute** | `Alt + M` | `⌥ + M` | Audio | Mute/unmute microphone from speech recognition |
+| **Universal Pause** | `Alt + U` | `⌥ + U` | Audio | Pause all transcription & AI processing |
+| **Reset Interview** | `Alt + O` | `⌥ + O` | System | Reset session state, transcript buffer & hints |
 
 ## 🎯 Proctoring Session Workflow
 

@@ -97,7 +97,7 @@ SuperAssist/
 | 🌐 **More AI Providers** | Add support for new LLM providers (Anthropic, Mistral, etc.) | 🚧 Open |
 | 🎨 **UI/UX** | Improve themes, animations, glanceable components | 🚧 Open |
 | 📝 **Documentation** | Setup guides, tutorials, video walkthroughs | 🚧 Open |
-| 🧪 **Testing** | Unit tests, mock audio tests, CI/CD pipeline | 🚧 Open |
+| 🧪 **Testing** | Unit & integration tests, mock audio tests, pytest test suite | ✅ 85 tests passing |
 
 ---
 

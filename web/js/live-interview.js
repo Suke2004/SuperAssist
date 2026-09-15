@@ -346,10 +346,10 @@ class LiveInterviewUI {
         let indicatorText = text;
         
         if (status.universal) {
-            indicatorText = '⏸️ System Paused - Press Alt+U to resume';
+            indicatorText = '⏸️ System Paused - Press Alt/⌥+U to resume';
             this.activityIndicator.classList.add('paused');
         } else if (status.microphone) {
-            indicatorText = '🔇 Microphone Muted - Press Alt+M to unmute';
+            indicatorText = '🔇 Microphone Muted - Press Alt/⌥+M to unmute';
             this.activityIndicator.classList.remove('paused');
         } else {
             this.activityIndicator.classList.remove('paused');
@@ -1393,11 +1393,11 @@ class LiveInterviewUI {
             if (isMuted) {
                 this.muteButton.classList.add('muted');
                 if (textSpan) textSpan.textContent = 'Muted';
-                this.muteButton.title = 'Microphone is Muted (Click or Alt+M to unmute)';
+                this.muteButton.title = 'Microphone is Muted (Click or Alt/⌥+M to unmute)';
             } else {
                 this.muteButton.classList.remove('muted');
                 if (textSpan) textSpan.textContent = 'Mute';
-                this.muteButton.title = 'Microphone is Active (Click or Alt+M to mute)';
+                this.muteButton.title = 'Microphone is Active (Click or Alt/⌥+M to mute)';
             }
         }
     }
@@ -1409,11 +1409,11 @@ class LiveInterviewUI {
             if (isPaused) {
                 this.pauseButton.classList.add('paused');
                 if (textSpan) textSpan.textContent = 'Paused';
-                this.pauseButton.title = 'AI Listening Paused (Click or Alt+U to resume)';
+                this.pauseButton.title = 'AI Listening Paused (Click or Alt/⌥+U to resume)';
             } else {
                 this.pauseButton.classList.remove('paused');
                 if (textSpan) textSpan.textContent = 'Pause';
-                this.pauseButton.title = 'AI Listening Active (Click or Alt+U to pause)';
+                this.pauseButton.title = 'AI Listening Active (Click or Alt/⌥+U to pause)';
             }
         }
     }

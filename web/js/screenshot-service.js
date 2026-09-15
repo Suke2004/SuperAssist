@@ -709,19 +709,19 @@ class ScreenshotService {
                 <p>Ready to capture and analyze screenshots anywhere!</p>
                 <div class="vision-hotkeys">
                     <div class="vision-hotkey">
-                        <kbd>Alt+S</kbd>
+                        <kbd>Alt/⌥+S</kbd>
                         <span>Capture</span>
                     </div>
                     <div class="vision-hotkey">
-                        <kbd>Alt+P</kbd>
+                        <kbd>Alt/⌥+P</kbd>
                         <span>Process</span>
                     </div>
                     <div class="vision-hotkey">
-                        <kbd>Alt+T</kbd>
+                        <kbd>Alt/⌥+T</kbd>
                         <span>Switch Model</span>
                     </div>
                     <div class="vision-hotkey">
-                        <kbd>Alt+V</kbd>
+                        <kbd>Alt/⌥+V</kbd>
                         <span>Exit Vision</span>
                     </div>
                 </div>
