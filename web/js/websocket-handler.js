@@ -314,11 +314,16 @@ export class WebSocketHandler {
         if (is_muted && speakerHint === 'microphone') {
             return;
         }
-        this.sendMessage('audio_chunk', {
-            audio_b64: this.bytesToBase64(chunk),
-            is_muted: is_muted,
-            speaker_hint: speakerHint
-        });
+        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+            // P1.1: High-speed binary WebSocket transport (2-byte header + Linear16 PCM)
+            // Header: Byte 0 = speaker (0x01: mic, 0x02: system), Byte 1 = muted (0x01: true, 0x00: false)
+            const rawBytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk.buffer || chunk);
+            const binaryFrame = new Uint8Array(2 + rawBytes.byteLength);
+            binaryFrame[0] = speakerHint === 'microphone' ? 0x01 : 0x02;
+            binaryFrame[1] = is_muted ? 0x01 : 0x00;
+            binaryFrame.set(rawBytes, 2);
+            this.socket.send(binaryFrame.buffer);
+        }
     }
 
     /**

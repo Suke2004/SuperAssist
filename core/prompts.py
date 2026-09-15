@@ -10,12 +10,40 @@
 #   4. First-write quality      — complete, runnable work; degenerate inputs handled IN the code/design.
 #   5. Self-verification        — line-by-line dry runs (happy path + edge case) and follow-ups actually solved.
 
+import re
 from typing import List, Optional
 
 from core.config import settings
 from services.context_manager import PersistentContextManager
 
 SECTION_DIVIDER = "═" * 79
+
+
+def is_hr_or_behavioral_question(text: Optional[str]) -> bool:
+    """Detect whether an interview question is an HR, personal, background, internship, value fit, or behavioral question."""
+    if not text:
+        return False
+    t = str(text).lower().strip()
+    patterns = [
+        r'\btell\s+me\s+about\s+(your?|you\b|the)?\s*(self|background|journey|story)',
+        r'\bintroduce\s+(your?|you\b)?\s*self\b',
+        r'\bwalk\s+(me\s+)?through\s+your\s+(resume|background|experience|cv)\b',
+        r'\btell\s+me\s+about\s+(your?|you\b)?\s*internship',
+        r'\b(what|tell\s+me\s+what)\s+value\s+(do\s+)?(you\s+)?bring\b',
+        r'\bwhy\s+(should\s+we\s+hire\s+you|do\s+you\s+want\s+to\s+work|join\s+us|this\s+company|our\s+company)\b',
+        r'\b(strength|weakness|strengths|weaknesses)\b',
+        r'\bwhere\s+do\s+you\s+see\s+yourself\b',
+        r'\btell\s+me\s+about\s+a\s+time\b',
+        r'\bdescribe\s+a\s+(time|situation|project|challenge)\b',
+        r'\bgive\s+(me\s+)?an\s+example\s+of\s+a\s+time\b',
+        r'\bhow\s+do\s+you\s+handle\s+(conflict|stress|pressure|failure|deadlines)\b',
+        r'\bconflict\s+with\s+(a\s+)?(coworker|colleague|manager|teammate)\b',
+        r'\bwhy\s+are\s+you\s+(leaving|looking\s+for\s+a\s+change)\b',
+        r'\bcareer\s+goals\b',
+        r'\bwork\s+ethic\b',
+        r'\bculture\s+fit\b',
+    ]
+    return any(re.search(p, t) for p in patterns)
 
 
 def _truncate(text: Optional[str], limit: int = 700) -> str:
@@ -26,6 +54,25 @@ def _truncate(text: Optional[str], limit: int = 700) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rsplit(" ", 1)[0] + " …[truncated]"
+
+
+MAX_RESUME_CHARS = 3500  # ~800-900 tokens: bounds candidate context to prevent latency spikes
+MAX_JD_CHARS = 2500      # ~600 tokens: bounds job description to prevent token window overflow
+
+
+def _compact_text(text: str, max_chars: int) -> str:
+    """P1.3: Compact large text blocks by normalizing whitespace and bounding length.
+    Preserves core skills, metrics, and experience while shedding redundant boilerplate.
+    """
+    if not text:
+        return ""
+    text = str(text).strip()
+    if len(text) <= max_chars:
+        return text
+
+    # Truncate at paragraph/line boundary if possible, or word boundary
+    truncated = text[:max_chars].rsplit("\n", 1)[0] if "\n" in text[:max_chars] else text[:max_chars].rsplit(" ", 1)[0]
+    return f"{truncated.strip()}\n…[remaining profile details compacted for token hygiene]"
 
 
 def build_unlimited_candidate_profile(persistent_context: dict, include_personal_details: bool = True) -> str:
@@ -61,13 +108,15 @@ def build_unlimited_candidate_profile(persistent_context: dict, include_personal
     if persistent_context.get('custom_instructions'):
         profile_parts.append(f"Candidate's Custom Instructions: {persistent_context['custom_instructions']}")
 
-    # Complete resume content
+    # Complete resume content (token budgeted & compacted for optimal TTFT)
     if include_personal_details and persistent_context.get('complete_resume'):
-        profile_parts.append(f"COMPLETE RESUME/BACKGROUND:\n{persistent_context['complete_resume']}")
+        resume = _compact_text(persistent_context['complete_resume'], MAX_RESUME_CHARS)
+        profile_parts.append(f"COMPLETE RESUME/BACKGROUND:\n{resume}")
 
-    # Complete job description
+    # Complete job description (token budgeted & compacted)
     if include_personal_details and persistent_context.get('complete_job_description'):
-        profile_parts.append(f"COMPLETE JOB DESCRIPTION/REQUIREMENTS:\n{persistent_context['complete_job_description']}")
+        jd = _compact_text(persistent_context['complete_job_description'], MAX_JD_CHARS)
+        profile_parts.append(f"COMPLETE JOB DESCRIPTION/REQUIREMENTS:\n{jd}")
 
     return "\n".join(profile_parts) + "\n" if profile_parts else ""
 
@@ -122,20 +171,31 @@ def get_language_specific_instructions(target_lang: str) -> str:
 # Persona & global rules
 # -----------------------------------------------------------------------------
 
-INTERVIEWER_PERSONA = """You are an elite, top-tier technical interview copilot providing real-time assistance during a live job interview.
+INTERVIEWER_PERSONA = """You are an elite, top-tier technical and behavioral interview copilot providing real-time assistance during a live job interview.
 Your answers are displayed to the candidate in real time on a transparent HUD while they look at their webcam and talk to the interviewer.
 
-CRITICAL MINDSET: Think like a real human FAANG interviewer grading a candidate live — and output exactly what a STRONG candidate would say and type.
-Real interviewers grade five signals, in this order:
-1. Clarified before building — assumptions stated out loud, then moved on; no clarifying question left hanging.
-2. Progressive reasoning — brute-force baseline first, the EXACT bottleneck named, then the optimization chosen BECAUSE of that bottleneck (never pattern-matched from memory).
-3. Justified correctness — the candidate defends WHY the approach can never miss the answer (the invariant), and every Big-O claim carries a one-line derivation.
-4. First-write quality — complete, runnable work: guard clauses first, degenerate inputs handled IN the code/design itself, zero pseudo-code or placeholders.
-5. Self-verification — the candidate dry-runs their own work line-by-line on a happy path AND an edge case before the interviewer finds the bug, and pre-empts follow-ups by actually solving them.
+CRITICAL MINDSET: Think like a real human top-tier interviewer (FAANG / Fortune 500) and candidate pair live — and output exactly what an EXCEPTIONAL candidate would say and present.
+Real interviewers grade differently depending on question type:
+- For CODING / ALGORITHM / DSA:
+  1. Clarify constraints before building.
+  2. Progressive reasoning (brute-force baseline -> named bottleneck -> optimal solution).
+  3. Justified correctness & Big-O derivations.
+  4. Complete, runnable, production-grade code.
+  5. Step-by-step dry run and edge cases.
+- For HR / BEHAVIORAL / PERSONAL / BACKGROUND (e.g. "Tell me about yourself", "Tell me about your internship", "What value do you bring?", "Why this company?", past experiences):
+  1. Immediate spoken dialogue: a fluent, compelling, authentic pitch delivered within 2 seconds.
+  2. Deep grounding in the candidate's actual resume, internship experience, and technical achievements.
+  3. Concrete ownership and impact (metrics, technologies used, problems solved).
+  4. Explicit alignment with the target role and company.
+  5. ZERO coding/complexity nonsense — NEVER write code, data structures, or Big-O complexity for HR/Behavioral questions!
+- For SYSTEM DESIGN:
+  Scoping, requirements, high-level architecture, API & data model, trade-offs, and scaling bottlenecks.
+- For TECHNICAL CONCEPTS:
+  Crisp definition, under-the-hood execution, trade-offs, and real-world application.
 
-Non-negotiable style rules a real interviewer also expects:
-- Immediate spoken dialogue: the candidate starts talking within 2 seconds to outline intuition.
-- Zero robotic fluff: no pleasantries ("Sure! Here is the solution:"), no markdown wrappers like ```markdown, no internal thinking or <think> tags."""
+Non-negotiable style rules:
+- Immediate spoken dialogue: the candidate starts talking within 2 seconds.
+- Zero robotic fluff: no pleasantries ("Sure! Here is the solution:"), no whole-response markdown wrappers like ```markdown, no internal thinking or <think> tags."""
 
 
 def _mandatory_rules(target_lang: str) -> str:
@@ -143,23 +203,32 @@ def _mandatory_rules(target_lang: str) -> str:
 1. FOCUS EXCLUSIVELY ON ANSWERING THE CURRENT QUESTION ABOVE.
 2. ALWAYS lead your response with the `> **💬 WHAT TO SAY OUT LOUD TO THE INTERVIEWER:**` block so the candidate can start speaking immediately within the first 2 seconds.
 3. NEVER wrap your entire response in ```markdown``` fences.
-4. For all code blocks, USE THE EXACT TARGET LANGUAGE TAG (```{target_lang}```) or the specific language requested in the question. NEVER use generic tags like ```code.
-5. All code must be 100% complete, fully implemented, compilable, and production-grade. NO pseudo-code, NO `// TODO: implement logic`.
-6. Every complexity claim must carry a one-line justification. NEVER state Big-O bare.
-7. Every clarifying question must be answered with the assumption you proceed under. NEVER leave a question open.
-8. For DSA/Coding questions: a NEW problem requires ALL 5 numbered sections (Clarification, Brute Force, Optimal, Dry Run, Edge Cases) with `###` headers — NEVER prefix section titles with bullets. A FOLLOW-UP on the current problem (e.g. "what if the input is sorted?", "can you do better on space?") must instead get a focused delta answer: spoken block, the changed approach, an updated code snippet, and re-derived complexity.
-9. NEVER include internal thinking or <think> tags in your output.
+4. 🚨 CRITICAL: QUESTION TYPE CLASSIFICATION (DETERMINE BEFORE GENERATING):
+   Before producing your response, identify the category of the question:
 
-🧭 TEMPLATE SELECTION (decide BEFORE answering):
-- New coding/algorithm/DSA problem → the CODING template below (all 5 sections).
-- Follow-up/variant of the CURRENT coding problem → focused delta answer (see rule 8), not the full template.
-- "Design X" / scale / architecture → SYSTEM DESIGN template.
-- "Tell me about a time…" / past experience → BEHAVIORAL template.
-- "What is X" / "How does X work" / compare X vs Y → CONCEPT template.
-- Greetings, logistics, "any questions for me?", salary or small talk → GENERAL template.
-- Mixed content → lead with the dominant intent and merge only the sections that add value.
+   [CATEGORY A] HR / BEHAVIORAL / PERSONAL / RESUME / INTRODUCTORY:
+   - Examples: "Tell me about yourself / your background", "Tell me about your internship / projects", "What value do you bring to the company?", "Why should we hire you?", "Why this company?", "What are your strengths/weaknesses?", "Where do you see yourself?", "Tell me about a time...", conflict, teamwork, leadership.
+   - ⚠️ STRICT PROHIBITION: NEVER output any code blocks, NEVER output Big-O time/space complexity, NEVER list data structures or algorithms, and NEVER use coding section headers (like Brute Force / Optimal / Dry Run) for HR/Behavioral questions! Ground all answers in the candidate's actual resume, internship, achievements, and target company/role using the BEHAVIORAL & HR template.
 
-Choose and follow the matching structured template below:"""
+   [CATEGORY B] CODING / ALGORITHM / DSA:
+   - Examples: algorithmic problems, LeetCode challenges, array/string/tree/graph manipulation, implementation tasks.
+   - Use the CODING template (all 5 numbered sections). All code must be 100% complete, fully implemented, compilable in {target_lang} (```{target_lang}```), and carry one-line Big-O justifications.
+
+   [CATEGORY C] CODING FOLLOW-UP / VARIANT:
+   - Follow-up on the current coding problem ("what if input is sorted?", "optimize space") → focused delta answer: spoken block, changed approach, code delta, re-derived complexity.
+
+   [CATEGORY D] SYSTEM DESIGN / ARCHITECTURE:
+   - "Design X", scaling, distributed systems → SYSTEM DESIGN template.
+
+   [CATEGORY E] TECHNICAL CONCEPT / KNOWLEDGE:
+   - "What is X", "How does X work", comparisons → CONCEPT template.
+
+   [CATEGORY F] GENERAL / LOGISTICS:
+   - Greetings, logistics, "any questions for me?", salary → GENERAL template.
+
+5. NEVER include internal thinking or <think> tags in your output.
+
+Choose and follow ONLY the matching structured template below:"""
 
 
 # -----------------------------------------------------------------------------
@@ -267,7 +336,31 @@ def _system_design_template() -> str:
 
 def _behavioral_template() -> str:
     return f"""{SECTION_DIVIDER}
-🎯 **FOR BEHAVIORAL / EXPERIENCE QUESTIONS:**
+🎯 **FOR BEHAVIORAL & HR / EXPERIENCE / INTRODUCTORY QUESTIONS:**
+*(Choose Format A for introductory/internship/value/fit questions, or Format B for situational stories)*
+
+---
+**FORMAT A: FOR HR / INTRODUCTORY / INTERNSHIP / VALUE PROPOSITION QUESTIONS**
+*(e.g., "Tell me about yourself", "Tell me about your internship", "What value do you bring to company?", "Why should we hire you?", "Why this company?", strengths/weaknesses, career goals)*
+
+> **💬 WHAT TO SAY OUT LOUD TO THE INTERVIEWER:**
+> "[3-4 natural, conversational sentences delivering an immediate, high-impact spoken response: (a) your professional identity, current focus, and core technical domain; (b) your most impactful internship or project accomplishment, mentioning specific technologies and tangible outcomes; (c) why your background directly translates to immediate value for this specific target company and role. Speak with confidence and authenticity.]"
+
+### 👤 1. Professional Identity & Focus
+- **Current Role & Domain:** [1-2 concise bullets summarizing current standing, technical specialization, and core focus drawn strictly from the candidate's resume/profile]
+- **Key Technical Proficiencies:** [Languages, frameworks, tools, or domain areas most relevant to the role]
+
+### 💼 2. Internship & Project Highlights
+- **Internship / Key Project Ownership:** [2-3 concrete bullets: what was built, candidate's specific ownership ("I designed...", "I implemented..."), tech stack used, and real-world impact]
+- **Quantifiable Results:** [Concrete outcomes: e.g. latency reduced, users served, workflows automated, features shipped to production]
+
+### 🎯 3. Value Proposition & Role Fit
+- **Immediate Value to Company:** [Direct connection between the candidate's skills and what the target company/team needs]
+- **Enthusiasm & Future Impact:** [Why this specific company/role excites the candidate and what they will deliver]
+
+---
+**FORMAT B: FOR SITUATIONAL BEHAVIORAL QUESTIONS**
+*(e.g., "Tell me about a time you faced a conflict / tight deadline / production outage / leadership challenge")*
 
 > **💬 WHAT TO SAY OUT LOUD TO THE INTERVIEWER:**
 > "[2 direct conversational sentences: the situation and stakes in one, the quantified result in the other — e.g. 'At my previous role, our checkout API began latency-spiking two days before a major release. I led the root-cause investigation, restructured our database indexing, and cut p99 latency by 65% — we shipped on time.']"
@@ -376,6 +469,16 @@ def get_interview_answer_prompt(question: str, context_manager: PersistentContex
     prompt_parts.append(f'"{question}"')
     prompt_parts.append("(If the question includes OCR/screenshot text, treat that content as the authoritative problem statement and address it directly.)")
 
+    # Explicit HR / Behavioral guidance if detected
+    if is_hr_or_behavioral_question(question):
+        prompt_parts.append("""🚨 DETECTED QUESTION INTENT: HR / BEHAVIORAL / PERSONAL / BACKGROUND QUESTION
+CRITICAL INSTRUCTION: The current question is an HR, introduction, internship, value proposition, or behavioral question.
+- STRICTLY DO NOT write any code blocks!
+- STRICTLY DO NOT mention Big-O complexity (Time/Space)!
+- STRICTLY DO NOT include data structures, algorithms, or dry runs!
+- FOLLOW THE BEHAVIORAL & HR TEMPLATE BELOW (Format A for introduction/internship/value questions, or Format B for situational stories).
+- Ground your spoken response and bullet points deeply in the candidate's real resume, internship, achievements, and target company context provided above.""")
+
     # Global rules + template routing
     prompt_parts.append(_mandatory_rules(target_lang))
 
@@ -429,6 +532,21 @@ def get_quick_response_prompt(question: str, context_manager: PersistentContextM
 
         profile_context = "\n".join(profile_parts) if profile_parts else "No profile available — answer generically."
 
+    is_hr = is_hr_or_behavioral_question(question)
+    hr_note = ""
+    if is_hr:
+        hr_note = """
+⚠️ SPECIAL RULE FOR HR / BEHAVIORAL QUESTION:
+- This is an HR / introductory / internship / value proposition question.
+- STRICTLY DO NOT write code, data structures, or time/space complexity.
+- Ground the answer in the candidate's real profile and resume above."""
+
+    complexity_line = (
+        "- **Key Highlight / Metric:** [Concrete achievement, tool, or metric from candidate's background — NO code or Big-O]"
+        if is_hr else
+        "- **Complexity/Application (if applicable):** [Time/space complexity with 1-line why, or a practical example]"
+    )
+
     return f"""🎯 CURRENT INTERVIEW QUESTION TO ANSWER:
 "{question}"
 
@@ -440,7 +558,7 @@ TARGET PROGRAMMING LANGUAGE: {target_lang}
 🎯 INSTRUCTIONS:
 Provide a rapid, highly concise response the candidate can deliver immediately.
 For a short or ambiguous question, commit to the most likely intent in the first line, then support it.
-If a complexity is relevant, state it WITH a one-line justification — never bare Big-O.
+If a complexity is relevant (for coding problems), state it WITH a one-line justification — never bare Big-O.{hr_note}
 NEVER wrap your entire answer in ```markdown``` fences.
 DO NOT include pleasantries or <think> tags.
 
@@ -452,6 +570,6 @@ MANDATORY STRUCTURE:
 ### ⚡ Key Takeaways
 - **Direct Answer:** [Punchy 1-line answer]
 - **Crucial Details:** [2 concise bullet points with supporting rationale]
-- **Complexity/Application (if applicable):** [Time/space complexity with 1-line why, or a practical example]
+{complexity_line}
 
 START YOUR STRUCTURED ANSWER DIRECTLY BELOW:"""

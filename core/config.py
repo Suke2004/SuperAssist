@@ -1,6 +1,10 @@
 import os
+import secrets
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import dotenv_values
+
+# Ephemeral secret generated on process launch for local API authentication
+APP_SESSION_TOKEN: str = secrets.token_hex(16)
 
 class Settings(BaseSettings):
     """

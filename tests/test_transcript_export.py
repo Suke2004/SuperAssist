@@ -8,7 +8,8 @@ def client():
     import os
     os.environ.setdefault("DEEPGRAM_API_KEY", "test-key-for-import")
     from main import app
-    with TestClient(app) as c:
+    from core.config import APP_SESSION_TOKEN
+    with TestClient(app, headers={"X-App-Token": APP_SESSION_TOKEN}) as c:
         yield c
 
 

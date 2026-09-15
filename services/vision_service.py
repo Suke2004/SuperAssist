@@ -9,6 +9,7 @@ from openai import AsyncOpenAI, APIStatusError, Timeout
 from core.config import settings
 from core.key_utils import usable_keys
 from core.error_utils import is_retryable_error
+from core.prompts import build_unlimited_candidate_profile
 from api.metrics import app_metrics
 
 # A3: explicit client timeout (matches llm_service.py). Vision requests get a
@@ -327,7 +328,7 @@ class VisionService:
     
     async def analyze_coding_problem(self, provider_name: str, model_name: str, 
                                    screenshots: List[str], languages: List[str] = None) -> Tuple[str, Dict[str, Any]]:
-        """Analyze coding problem screenshots with comprehensive prompting"""
+        """Analyze screenshots (coding, HR/behavioral, MCQ, system design) with comprehensive prompting"""
         
         vision_manager = self.get_vision_manager(provider_name, model_name)
         if not vision_manager:
@@ -337,15 +338,31 @@ class VisionService:
                 "model": model_name
             }
         
-        # Generate comprehensive coding prompt
-        prompt = self.generate_coding_analysis_prompt(languages)
+        # Generate comprehensive prompt with candidate context
+        prompt = self.generate_coding_analysis_prompt(languages, context_manager=self.context_manager)
         
         # Perform vision analysis
         return await vision_manager.analyze_screenshots(prompt, screenshots, languages)
     
-    def generate_coding_analysis_prompt(self, languages: List[str] = None) -> str:
-        """Generate a comprehensive prompt for analyzing screenshots, capable of handling coding problems, MCQs, or a mix."""
-        
+    def generate_coding_analysis_prompt(self, languages: List[str] = None, context_manager=None) -> str:
+        """Generate a comprehensive prompt for analyzing screenshots, capable of handling HR/behavioral questions, coding problems, MCQs, or system design."""
+        if context_manager is None:
+            context_manager = self.context_manager
+
+        candidate_profile_block = ""
+        if context_manager is not None and context_manager.ensure_context_available():
+            complete_context = context_manager.get_complete_context()
+            persistent = complete_context.get('persistent') or {}
+            profile = build_unlimited_candidate_profile(persistent, settings.PERSONALIZE_ANSWERS)
+            if profile:
+                candidate_profile_block = f"""
+================================================================================
+🔒 CANDIDATE PROFILE & RESUME CONTEXT:
+{profile}
+(CRITICAL: Use the candidate background, internship, skills, and target role/company above to answer any HR, introduction, internship, background, or behavioral questions that appear in the screenshots.)
+================================================================================
+"""
+
         # Determine primary programming language and context
         primary_language = "C++"  # Default fallback
         language_context = ""
@@ -359,15 +376,15 @@ class VisionService:
                 primary_language = programming_languages[0]
                 other_languages = programming_languages[1:] if len(programming_languages) > 1 else []
                 
-                language_context = f"**Primary Programming Language (if applicable for coding/MCQs):** {primary_language}\\n"
+                language_context = f"**Primary Programming Language (if applicable for coding/MCQs):** {primary_language}\n"
                 if other_languages:
-                    language_context += f"**Alternative Languages:** {', '.join(other_languages)}\\n"
+                    language_context += f"**Alternative Languages:** {', '.join(other_languages)}\n"
             elif sql_available: # Only SQL was selected
-                language_context = f"**Primary Programming Language (default for coding tasks):** {primary_language}\\n**Database Language Detected:** SQL\\n"
+                language_context = f"**Primary Programming Language (default for coding tasks):** {primary_language}\n**Database Language Detected:** SQL\n"
             else: # No languages or only non-SQL, non-programming specified
-                language_context = f"**Primary Programming Language (default for coding tasks):** {primary_language}\\n"
+                language_context = f"**Primary Programming Language (default for coding tasks):** {primary_language}\n"
         else:
-            language_context = f"**Primary Programming Language (default for coding tasks):** {primary_language}\\n"
+            language_context = f"**Primary Programming Language (default for coding tasks):** {primary_language}\n"
 
         # Conditional SQL instructions for coding problems
         sql_instructions_for_coding = ""
@@ -398,35 +415,77 @@ SELECT ... FROM ... WHERE ...;
         # The prompt structure
         return f"""You are an expert AI assistant and senior technical interview copilot. Your task is to analyze the content of the provided screenshots.
 
-CRITICAL MINDSET: Think like a real senior FAANG interviewer and candidate pair programming together, NOT a robot.
-Real interviewers evaluate:
-1. Clarifying constraints before coding.
-2. Progressive problem solving: explaining the Brute Force baseline before jumping to the Optimal solution.
-3. Providing real, complete working code for BOTH Brute Force and Optimal solutions (no skipped lines, no placeholders).
-4. Dry running test cases step-by-step to prove correctness.
+CRITICAL MINDSET: Think like a real human top-tier interviewer and exceptional candidate pair live.
+Real interviewers evaluate differently based on what is shown on screen:
+- For HR / BEHAVIORAL / PERSONAL / INTERNSHIP questions: Authenticity, clear spoken pitch, relevant experience drawn from the candidate's resume/profile, tangible achievements/metrics, and alignment with the company. NEVER output code or Big-O complexity for HR questions!
+- For CODING / ALGORITHM / DSA problems: Clarifying constraints, progressive problem solving (Brute Force to Optimal), complete runnable code for both, dry running test cases, and edge cases.
+- For MCQs: Direct, clear answer (Option letter + text at line 1) with concise rationale.
 
-**Overall Goal:** Provide a clear, accurate, and comprehensive analysis based on the dominant type of content in the screenshots.
-
-**Content Assessment:**
-First, carefully assess the screenshots to determine the primary type of information presented. This could be:
-1.  **Multiple Choice Questions (MCQs):** Questions with several options, covering any topic (e.g., programming, aptitude, cloud technologies like AWS/GCP, quantitative, general knowledge).
-2.  **Coding Problem:** A specific programming challenge requiring algorithmic thinking, code implementation, and analysis.
-3.  **Mixed Content:** A combination of MCQs and coding problems, or other informational content.
-4.  **Other:** If the content doesn't fit the above, describe it and assist as best as you can.
+{candidate_profile_block}
+**Content Assessment (IDENTIFY FIRST):**
+Carefully assess the screenshots to determine the primary type of information presented:
+1. 👤 **HR / Behavioral / Personal / Resume Questions:**
+   Questions or prompts displayed on screen such as:
+   - "Tell me about yourself" / "Introduce yourself"
+   - "Tell me about your internship" / past projects
+   - "What value do you bring to company" / "Why should we hire you?"
+   - "Why do you want to work here?" / "Where do you see yourself in 5 years?"
+   - Strengths, weaknesses, teamwork, conflict, or situational interview questions
+   - HireVue, video interview, or text-based interview portal prompts.
+2. 🔧 **Coding / Algorithm / DSA Problem:**
+   A specific programming challenge with problem description, constraints, input/output examples, or a code editor.
+3. 📝 **Multiple Choice Questions (MCQs):**
+   Questions with multiple options (A, B, C, D) covering coding, aptitude, cloud, systems, or general knowledge.
+4. 🏗️ **System Design / Architecture:**
+   System architecture questions, high-level design, or distributed systems diagrams.
+5. 🔍 **Technical Concept / Mixed / Other:**
+   Explanation of technical concepts or mixed content.
 
 {language_context}
 ---
 
-**SECTION 1: MULTIPLE CHOICE QUESTION (MCQ) ANALYSIS**
+**SECTION 1: HR / BEHAVIORAL / INTERVIEW QUESTION ANALYSIS & RESPONSE**
+*If the screenshots contain HR, personal introduction, internship, value proposition, or behavioral questions (e.g., "Tell me about yourself", "Tell me about your internship", "What value do you bring to company", etc.), USE THIS SECTION.*
+
+🚨 **STRICT PROHIBITIONS FOR HR QUESTIONS:**
+- DO NOT write any code blocks!
+- DO NOT provide Brute Force or Optimal code!
+- DO NOT mention Big-O Time/Space complexity!
+- DO NOT include data structures or algorithmic dry runs!
+- DO NOT use coding section headers!
+
+Instead, ground your answers in the candidate's provided profile and resume above.
+If multiple questions are listed on the screen (e.g. 1. Tell me about yourself, 2. Tell me about your internship, 3. What value do you bring to company):
+Address EACH question clearly using this format:
+
+> **💬 WHAT TO SAY OUT LOUD TO THE INTERVIEWER:**
+> "[3-4 natural, conversational, confident sentences the candidate can speak immediately: (a) professional identity & core technical domain; (b) key internship/project achievement with concrete tools and metrics from resume; (c) direct value proposition and excitement for the target company/role.]"
+
+### 👤 1. Professional Background & Identity
+- **Role & Focus:** [1-2 concise bullets summarizing current standing, technical domain, and passion from resume]
+- **Core Strengths:** [Primary skills, languages, and technical strengths relevant to the role]
+
+### 💼 2. Key Internship & Project Highlights
+- **Specific Ownership & Projects:** [2-3 concrete bullets: what was built, candidate's specific contribution ("I designed...", "I built..."), tech stack used, and challenges overcome]
+- **Quantified Impact:** [Real outcomes: e.g. metrics, efficiency gains, features shipped, systems improved]
+
+### 🎯 3. Value Proposition & Role Fit
+- **Value to Target Company:** [Why the candidate's specific background directly solves problems for the target company]
+- **Enthusiasm & Alignment:** [Why this specific role and team is the ideal fit]
+
+---
+
+**SECTION 2: MULTIPLE CHOICE QUESTION (MCQ) ANALYSIS**
 *If MCQs are present (either exclusively or as part of mixed content), use this section.*
 
 For EACH MCQ identified:
 1. **✅ CORRECT ANSWER:** State the exact Option Letter and Option Text immediately at LINE 1: **`[Option Letter] - Full Option Text`**
 2. **Core Justification:** 1-2 clear, direct sentences explaining why this option is correct.
 3. **Key Distractor Note:** Brief note on why common incorrect options fail.
+
 ---
 
-**SECTION 2: CODING / DSA PROBLEM ANALYSIS & SOLUTION**
+**SECTION 3: CODING / DSA PROBLEM ANALYSIS & SOLUTION**
 *If a coding or DSA problem is present (either exclusively or as part of mixed content), use this section.*
 
 {sql_instructions_for_coding if sql_available else "<!-- No specific SQL instructions for coding problem as SQL was not indicated as a relevant language. -->"}
@@ -445,7 +504,7 @@ For EACH MCQ identified:
 - **The Bottleneck:** [Where redundant work happens: e.g. repeatedly re-scanning elements, causing Time Limit Exceeded (TLE) for large N]
 
 ```{lang_tag}
-// Complete, working Brute Force implementation in {primary_language}, with minal comments explaining the key steps of algorithm
+// Complete, working Brute Force implementation in {primary_language}, with minimal comments explaining the key steps of algorithm
 ```
 
 ### ⚡ 3. Optimal Solution ([Core Pattern / Technique Name])
@@ -457,13 +516,11 @@ For EACH MCQ identified:
 - **Complexity:** **Time:** O(...) — [step-by-step rationale] | **Space:** O(...) — [auxiliary memory breakdown]
 
 ```{lang_tag}
-// Complete, production-grade Optimal implementation in {primary_language}, with minal comments explaining the key steps of algorithm
+// Complete, production-grade Optimal implementation in {primary_language}, with minimal comments explaining the key steps of algorithm
 // Clean variable names, idiomatic style, robust edge-case handling
 ```
 
-###  4. Key data structures or key named algorithms
-* list out the key data structures or key named algorithms used in the optimal solution:*
-
+### 🔑 4. Key Data Structures or Key Named Algorithms
 - **Key Data Structures:**
   1. [Data Structure 1]: [Why it is used, its properties, and how it helps optimize the solution]
   2. [Data Structure 2]: [Why it is used, its properties, and how it helps optimize the solution]
@@ -483,10 +540,21 @@ For EACH MCQ identified:
 - **Edge Cases Handled:** [e.g. Empty array, single element, duplicates, negative numbers, extreme values]
 - **Follow-up / Scaling:** [1-2 sentences on how to handle streaming data or inputs larger than RAM]
 
+---
+
+**SECTION 4: SYSTEM DESIGN / TECHNICAL CONCEPT**
+*If the screenshot shows a system design prompt or a technical conceptual question:*
+- Provide spoken opening (`> **💬 WHAT TO SAY OUT LOUD TO THE INTERVIEWER:**`).
+- For System Design: Scoping, High-Level Architecture, Data Model, Trade-offs & Bottlenecks.
+- For Technical Concept: Definition, How it works, When to use / when not to use, Comparison.
+
+---
+
 **Final Instructions:**
-- Provide complete code for BOTH Brute Force and Optimal solutions.
-- Use `###` header format for all 5 numbered section titles. Never prefix section titles with bullet points (`- ` or `* `).
-- Ensure your analysis directly addresses the content of the screenshots.
+- **CRITICAL ROUTING**: Choose the ONE section that matches the primary content of the screenshots.
+- If the screenshot shows HR / behavioral / internship / personal questions: use SECTION 1 strictly — NEVER output code, Big-O complexity, or coding sections.
+- If the screenshot shows a coding problem: use SECTION 3 with complete code for BOTH Brute Force and Optimal solutions.
+- If the screenshot shows an MCQ: use SECTION 2 with correct answer at line 1.
 - Never wrap your entire answer in ```markdown``` fences.
 """
 

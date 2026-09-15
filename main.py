@@ -22,35 +22,39 @@ elif not _env_path.exists() and not _env_example_path.exists():
     print("⚠️ No .env or .env.example found. The app may fail to start without a .env file.")
 
 import asyncio
+import json
+from urllib.parse import urlsplit
 
 import aiofiles
 import orjson
 import uvicorn
 import webview
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 import window_manager  # Our new module for capture protection
 from api import websocket, config_api
 from api.metrics import app_metrics, APP_VERSION
 from api.session_manager import session_manager
-from core.config import settings, print_config_debug
+from core.config import settings, print_config_debug, APP_SESSION_TOKEN
 
 
 def find_free_port(preferred: int = 8002) -> int:
     """Check if the preferred port is available; if not, find a free one."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            s.bind(('127.0.0.1', preferred))
-            return preferred
-        except OSError:
-            pass
-    # Preferred port is occupied — let the OS pick a free one
+    if preferred and preferred > 0:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('127.0.0.1', preferred))
+                return preferred
+            except OSError:
+                pass
+    # Preferred port is occupied or dynamic port requested — let the OS pick a free one
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('127.0.0.1', 0))
         port = s.getsockname()[1]
-    print(f"⚠️ Port {preferred} is busy, using port {port} instead")
+    if preferred and preferred > 0:
+        print(f"⚠️ Port {preferred} is busy, using port {port} instead")
     return port
 
 # --- Development Flag (now from .env) ---
@@ -80,69 +84,23 @@ class GlobalCommandMonitor:
         self.websocket_manager = ws_manager
         
     async def start_monitoring(self):
-        """Start the command monitoring task"""
-        # Clean up any old command files
+        """Start the in-memory command monitoring (zero disk I/O polling)"""
+        # Clean up any leftover legacy command files once on startup
         try:
             if os.path.exists(self.command_file):
                 os.remove(self.command_file)
-                print("🧹 Cleared old global command file")
+                print("🧹 Cleared leftover global command file")
         except Exception as e:
-            print(f"⚠️ Could not clear old command file: {e}")
+            pass
         
         self.running = True
-        self._monitor_task = asyncio.create_task(self._async_monitor_loop())
-        print("🎮 Global command monitor started")
+        print("🎮 Global in-memory command dispatcher active (0ms latency, zero disk I/O)")
         
     async def stop_monitoring(self):
         """Stop the command monitoring"""
         self.running = False
-        if self._monitor_task and not self._monitor_task.done():
-            self._monitor_task.cancel()
-            try:
-                await self._monitor_task
-            except asyncio.CancelledError:
-                pass
         print("🎮 Global command monitor stopped")
     
-    async def _async_monitor_loop(self):
-        """Async monitoring loop that checks for commands with improved performance"""
-        while self.running:
-            try:
-                if os.path.exists(self.command_file):
-                    # Check file modification time
-                    file_mtime = os.path.getmtime(self.command_file)
-                    
-                    if file_mtime > self.last_command_time:
-                        self.last_command_time = file_mtime
-                        
-                        # Read and process the command using async file I/O
-                        try:
-                            async with aiofiles.open(self.command_file, 'rb') as f:
-                                file_content = await f.read()
-                                command_data = orjson.loads(file_content)
-                            
-                            # Process the command
-                            if self._process_command(command_data):
-                                # Clean up the command file after successful processing
-                                try:
-                                    os.remove(self.command_file)
-                                    print(f"🧹 Cleaned up command file after processing")
-                                except Exception as cleanup_error:
-                                    # Don't fail if cleanup fails
-                                    pass
-                            
-                        except (orjson.JSONDecodeError, IOError) as e:
-                            # Ignore file read errors (file might be being written)
-                            pass
-                            
-                await asyncio.sleep(0.05)  # Responsive check (50ms for smooth continuous scrolling)
-                
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                print(f"❌ Error in command monitor: {e}")
-                await asyncio.sleep(1)  # Wait longer on error
-                
     def _process_command(self, command_data):
         """Process a command from the global hotkey"""
         command = command_data.get('command', '')
@@ -189,11 +147,11 @@ class GlobalCommandMonitor:
             elif command == 'reset_screenshot_queue':
                 self._execute_browser_command('if (window.resetScreenshotQueue) { window.resetScreenshotQueue(); } else { console.warn("resetScreenshotQueue not available"); }')
             elif command == 'switch_preset':
-                preset_key = command_data.get('preset_key', 'primary')
-                self._execute_browser_command(f'if (window.switchPreset) {{ window.switchPreset("{preset_key}"); }} else {{ console.warn("switchPreset not available"); }}')
+                preset_key = json.dumps(str(command_data.get('preset_key', 'primary')))
+                self._execute_browser_command(f'if (window.switchPreset) {{ window.switchPreset({preset_key}); }} else {{ console.warn("switchPreset not available"); }}')
             elif command == 'set_transparency':
-                transparency_level = command_data.get('level', 'opaque')
-                self._execute_browser_command(f'if (window.setTransparency) {{ window.setTransparency("{transparency_level}"); }} else {{ console.warn("setTransparency not available"); }}')
+                transparency_level = json.dumps(str(command_data.get('level', 'opaque')))
+                self._execute_browser_command(f'if (window.setTransparency) {{ window.setTransparency({transparency_level}); }} else {{ console.warn("setTransparency not available"); }}')
             elif command == 'toggle_mic_mute':
                 self._execute_browser_command('if (window.toggleMicMute) { window.toggleMicMute(); } else { console.warn("toggleMicMute not available"); }')
             elif command == 'toggle_universal_mute':
@@ -204,13 +162,13 @@ class GlobalCommandMonitor:
                 self._execute_browser_command('if (window.resetInterview) { window.resetInterview(); } else { console.warn("resetInterview not available"); }')
             elif command == 'scroll':
                 direction = command_data.get('direction', 'down')
-                amount = command_data.get('amount', 90)
+                try:
+                    amount = int(command_data.get('amount', 90))
+                except (ValueError, TypeError):
+                    amount = 90
                 # Use smooth scrolling with the specified amount
-                if direction == 'up':
-                    scroll_amount = -amount
-                else:
-                    scroll_amount = amount
-                js_code = f'document.getElementById("conversation-stream").scrollBy({{ top: {scroll_amount}, left: 0, behavior: "smooth" }})'
+                scroll_amount = -amount if direction == 'up' else amount
+                js_code = f'var el = document.getElementById("conversation-stream"); if (el) {{ el.scrollBy({{ top: {scroll_amount}, left: 0, behavior: "smooth" }}); }}'
                 self._execute_browser_command(js_code)
             elif command == 'context_aware_action':
                 action = command_data.get('action', '')
@@ -238,29 +196,80 @@ class GlobalCommandMonitor:
             print(f"❌ Error in direct command dispatch: {e}")
 
     def _execute_browser_command(self, js_code):
-        """Execute JavaScript code in the browser with zero artificial delay"""
+        """Execute JavaScript code in the browser with thread-safety and error containment"""
         try:
             # Use webview's evaluate_js to run the command
             if hasattr(webview, 'windows') and webview.windows:
                 window = webview.windows[0]  # Get the first (main) window
                 
-                # Execute immediately without blocking sleep
                 try:
                     window.evaluate_js(js_code)
                 except Exception as js_error:
                     # If direct execution fails, fallback to microtask queue
                     wrapped_code = f"setTimeout(() => {{ try {{ {js_code} }} catch(e) {{ console.warn('Global command error:', e); }} }}, 0);"
-                    window.evaluate_js(wrapped_code)
+                    try:
+                        window.evaluate_js(wrapped_code)
+                    except Exception:
+                        pass
             else:
-                print("⚠️ No webview window available for command execution")
+                pass  # Window not yet initialized
         except Exception as e:
-            print(f"❌ Failed to execute browser command: {e}")
+            print(f"⚠️ Failed to execute browser command safely: {e}")
 
 # Create global command monitor instance
 command_monitor = GlobalCommandMonitor()
 
 # --- FastAPI App Setup ---
 app = FastAPI()
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    """
+    P0.1 Security Enforcement Middleware:
+    1. Host header validation (DNS Rebinding protection).
+    2. Origin / Referer validation (Cross-Site Request Forgery / Hijacking protection).
+    3. Sec-Fetch-Site validation.
+    4. Ephemeral session token (X-App-Token) verification for stateful / sensitive /api/ routes.
+    """
+    # 1. DNS Rebinding protection: Host must be local
+    host_header = request.headers.get("host", "")
+    host_name = host_header.split(":", 1)[0].lower() if host_header else ""
+    if host_name and host_name not in ("127.0.0.1", "localhost", "testserver"):
+        return JSONResponse(status_code=403, content={"detail": "Forbidden: Invalid Host header"})
+
+    path = request.url.path
+
+    # Allow static assets, favicon, and root index without restrictions
+    if path.startswith("/static") or path == "/favicon.ico" or path == "/":
+        return await call_next(request)
+
+    # 2. Origin validation for browser-initiated requests
+    origin = request.headers.get("origin")
+    if origin:
+        try:
+            origin_host = urlsplit(origin).hostname
+        except Exception:
+            return JSONResponse(status_code=403, content={"detail": "Forbidden: Malformed Origin header"})
+
+        if origin_host and origin_host.lower() not in ("127.0.0.1", "localhost", "testserver"):
+            return JSONResponse(status_code=403, content={"detail": "Forbidden: Cross-origin request rejected"})
+
+    # 3. Sec-Fetch-Site validation (drop cross-site requests)
+    sec_fetch_site = request.headers.get("sec-fetch-site")
+    if sec_fetch_site and sec_fetch_site.lower() == "cross-site":
+        return JSONResponse(status_code=403, content={"detail": "Forbidden: Cross-site request rejected"})
+
+    # 4. Token validation for sensitive /api/ endpoints
+    # Health and metrics are safe diagnostics for local inspection
+    # /api/config is read during initial page setup
+    exempt_paths = {"/api/health", "/api/metrics", "/api/config"}
+    if path.startswith("/api/") and path not in exempt_paths:
+        token = request.headers.get("x-app-token")
+        if not token or token != APP_SESSION_TOKEN:
+            return JSONResponse(status_code=403, content={"detail": "Forbidden: Missing or invalid application token"})
+
+    return await call_next(request)
+
 app.include_router(websocket.router)
 app.include_router(config_api.router)
 
@@ -283,17 +292,28 @@ async def metrics():
     return JSONResponse(content=snapshot)
 
 # Mount the 'web' directory to serve static files (CSS, JS)
-# This makes files in 'web/css' and 'web/js' available under '/static/css' and '/static/js'
 app.mount("/static", StaticFiles(directory="web"), name="static")
 
 @app.get("/")
 async def read_index(request: Request):
-    """Serves the main index.html file."""
-    return FileResponse(os.path.join('web', 'index.html'))
+    """Serves the main index.html file with injected session token for authentication."""
+    index_file = os.path.join('web', 'index.html')
+    try:
+        async with aiofiles.open(index_file, 'r', encoding='utf-8') as f:
+            html = await f.read()
+        injection = f'<meta name="app-token" content="{APP_SESSION_TOKEN}">\n    <script>window.__APP_TOKEN__ = "{APP_SESSION_TOKEN}";</script>'
+        if '<head>' in html:
+            html = html.replace('<head>', f'<head>\n    {injection}', 1)
+        else:
+            html = f"{injection}\n{html}"
+        return HTMLResponse(content=html)
+    except Exception as e:
+        print(f"⚠️ Error reading index.html: {e}")
+        return FileResponse(index_file)
 
 # --- Async Server Management ---
 class UvicornServer:
-    """Manages the Uvicorn server as an asyncio task"""
+    """Manages the Uvicorn server as an asyncio task with dynamic port retry"""
     
     def __init__(self, app, host="127.0.0.1", port=None):
         self.app = app
@@ -304,34 +324,50 @@ class UvicornServer:
         
     async def start(self):
         """Start the Uvicorn server as an asyncio task and wait until it is bound.
-
-        C9: previously start() returned immediately and main() guessed readiness
-        with a blind sleep(2), which intermittently showed the webview a
-        connection-refused page on slower machines. Polling uvicorn's own
-        ``started`` flag removes the guesswork.
+        Retries on alternate ports if port collision or binding delay occurs.
         """
-        config = uvicorn.Config(
-            app=self.app,
-            host=self.host,
-            port=self.port,
-            log_level="warning",
-            loop="asyncio"
-        )
-        self.server = uvicorn.Server(config)
-        self.server_task = asyncio.create_task(self.server.serve())
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                config = uvicorn.Config(
+                    app=self.app,
+                    host=self.host,
+                    port=self.port,
+                    log_level="warning",
+                    loop="asyncio"
+                )
+                self.server = uvicorn.Server(config)
+                self.server_task = asyncio.create_task(self.server.serve())
 
-        # Wait for the socket to actually be bound (uvicorn sets .started).
-        for _ in range(100):  # up to 10s
-            if self.server.started:
-                break
-            if self.server_task.done():
-                # Server crashed during startup (e.g. port stolen by a racer)
-                raise RuntimeError("Uvicorn server failed during startup")
-            await asyncio.sleep(0.1)
-        else:
-            raise RuntimeError("Uvicorn server did not bind within 10 seconds")
+                # Wait for the socket to actually be bound (uvicorn sets .started).
+                for _ in range(50):  # up to 5s
+                    if self.server.started:
+                        print(f"🚀 Uvicorn server started on {self.host}:{self.port}")
+                        return
+                    if self.server_task.done():
+                        # Server failed during startup (e.g. port collision)
+                        break
+                    await asyncio.sleep(0.1)
 
-        print(f"🚀 Uvicorn server started on {self.host}:{self.port}")
+                # Not started in time or task failed; clean up and try a fresh port
+                self.server.should_exit = True
+                if self.server_task and not self.server_task.done():
+                    self.server_task.cancel()
+                    try:
+                        await self.server_task
+                    except asyncio.CancelledError:
+                        pass
+                
+                # Pick a fresh dynamic port assigned by OS
+                self.port = find_free_port(0)
+                print(f"🔄 Retrying Uvicorn on dynamic port {self.port} (attempt {attempt+1}/{max_attempts})...")
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                print(f"⚠️ Uvicorn bind attempt error: {e}")
+                self.port = find_free_port(0)
+                await asyncio.sleep(0.1)
+
+        raise RuntimeError(f"Uvicorn server failed to bind after {max_attempts} attempts")
         
     async def stop(self):
         """Stop the Uvicorn server gracefully"""
@@ -360,13 +396,20 @@ class AsyncioServiceThread:
         self.loop = None
         self.shutdown_event = None
         self.services_task = None
+        self.server_ready_event = threading.Event()
         
     def start(self):
-        """Start the asyncio services in a background thread"""
+        """Start the asyncio services in a background thread and wait for readiness"""
         self.shutdown_event = threading.Event()
+        self.server_ready_event.clear()
         self.thread = threading.Thread(target=self._run_asyncio_thread, daemon=True)
         self.thread.start()
         print("🚀 Asyncio services thread started")
+        # Block until Uvicorn server has successfully bound and started
+        if not self.server_ready_event.wait(timeout=15.0):
+            print("⚠️ Asyncio services thread took longer than 15s to signal server readiness")
+        else:
+            print(f"✅ Uvicorn server confirmed ready on port {uvicorn_server.port}")
         
     def stop(self):
         """Stop the asyncio services gracefully"""
@@ -423,6 +466,9 @@ class AsyncioServiceThread:
             # Start the Uvicorn server
             await uvicorn_server.start()
             
+            # Signal readiness to main thread so webview window creation can proceed
+            self.server_ready_event.set()
+            
             # Start the session cleanup task
             session_manager.start_cleanup_task()
             
@@ -437,6 +483,7 @@ class AsyncioServiceThread:
             
         except Exception as e:
             print(f"❌ Error in async services: {e}")
+            self.server_ready_event.set()
         finally:
             # Cleanup
             await self._cleanup_async_services()

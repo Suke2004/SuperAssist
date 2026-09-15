@@ -157,8 +157,37 @@ class InterviewSession:
             print(f"❌ CRITICAL: Session {self.session_id}: Failed to start interview: {e}")
             await self._send_json("error", {"message": f"Failed to initialize AI providers: {str(e)}"})
 
+    async def handle_binary_audio(self, data: bytes):
+        """P1.1: Fast zero-copy handler for binary audio frames.
+        
+        Frame layout:
+          - Byte 0: speaker_hint (0x01: microphone, 0x02: system)
+          - Byte 1: is_muted (0x01: muted, 0x00: unmuted)
+          - Bytes 2+: Linear16 PCM audio data
+        """
+        self._touch()
+        if self.state.get("is_universally_muted", False) or len(data) <= 2:
+            return
+
+        speaker_flag = data[0]
+        muted_flag = data[1]
+        speaker_hint = 'microphone' if speaker_flag == 1 else 'system'
+        is_mic_muted = (muted_flag == 1) or self.state.get("is_muted", False)
+        self.state["is_muted"] = is_mic_muted
+
+        self.hint_timeline.append((time.time(), speaker_hint == 'microphone'))
+
+        # If microphone is muted and this chunk is from microphone, drop it immediately
+        if is_mic_muted and speaker_hint == 'microphone':
+            return
+
+        if self.stt_manager:
+            audio_pcm = data[2:]
+            if audio_pcm:
+                await self.stt_manager.send_audio(audio_pcm)
+
     async def handle_audio_chunk(self, payload: dict):
-        """Handles incoming audio chunks."""
+        """Handles incoming legacy JSON audio chunks."""
         self._touch()
         if self.state.get("is_universally_muted", False):
             return

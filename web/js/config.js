@@ -1,3 +1,29 @@
+// Security & Authentication: Automatically attach X-App-Token to internal /api/ requests
+if (typeof window !== 'undefined' && window.fetch) {
+    const _nativeFetch = window.fetch;
+    window.fetch = function (input, init) {
+        init = init || {};
+        const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+        const token = window.__APP_TOKEN__ || document.querySelector('meta[name="app-token"]')?.getAttribute('content');
+
+        if (token && typeof url === 'string' && url.startsWith('/api/')) {
+            if (!init.headers) {
+                init.headers = {};
+            }
+            if (init.headers instanceof Headers) {
+                if (!init.headers.has('X-App-Token')) {
+                    init.headers.set('X-App-Token', token);
+                }
+            } else if (Array.isArray(init.headers)) {
+                init.headers.push(['X-App-Token', token]);
+            } else {
+                init.headers['X-App-Token'] = token;
+            }
+        }
+        return _nativeFetch.call(this, input, init);
+    };
+}
+
 // Configuration loader - fetches centralized config from backend
 let appConfig = {
     DEV_MODE: false, // Default fallback

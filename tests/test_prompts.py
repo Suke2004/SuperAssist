@@ -86,3 +86,63 @@ class TestLanguageResolution:
         # containing e.g. 'c' would map to 'c'. Use a collision-free fake name.
         ctx = _make_context(languages=["XYZZYlang"])
         assert ctx.get_primary_language() == "python"
+
+
+class TestHRQuestionDifferentiation:
+    def test_is_hr_or_behavioral_question_detection(self):
+        from core.prompts import is_hr_or_behavioral_question
+
+        # Questions from exp.txt and common HR questions
+        assert is_hr_or_behavioral_question("1. Tell me about you self") is True
+        assert is_hr_or_behavioral_question("Tell me about yourself") is True
+        assert is_hr_or_behavioral_question("2. Tell me about you internship") is True
+        assert is_hr_or_behavioral_question("Tell me about your internship") is True
+        assert is_hr_or_behavioral_question("3. tell me what value you bring to company") is True
+        assert is_hr_or_behavioral_question("What value do you bring to our team?") is True
+        assert is_hr_or_behavioral_question("Why should we hire you?") is True
+        assert is_hr_or_behavioral_question("What are your greatest strengths and weaknesses?") is True
+        assert is_hr_or_behavioral_question("Where do you see yourself in 5 years?") is True
+        assert is_hr_or_behavioral_question("Tell me about a time you had a conflict with a teammate") is True
+
+        # Coding and technical questions should NOT match HR
+        assert is_hr_or_behavioral_question("Two sum problem") is False
+        assert is_hr_or_behavioral_question("Given an array of integers nums and an integer target, return indices") is False
+        assert is_hr_or_behavioral_question("Implement LRU Cache") is False
+        assert is_hr_or_behavioral_question("Design Twitter system architecture") is False
+        assert is_hr_or_behavioral_question("What is the difference between TCP and UDP?") is False
+
+    def test_audio_hr_prompt_includes_negative_coding_constraints(self):
+        ctx = _make_context()
+        prompt = get_interview_answer_prompt("Tell me about you self", ctx)
+        assert "DETECTED QUESTION INTENT: HR / BEHAVIORAL / PERSONAL / BACKGROUND QUESTION" in prompt
+        assert "STRICTLY DO NOT write any code blocks" in prompt
+        assert "STRICTLY DO NOT mention Big-O complexity" in prompt
+        assert "FORMAT A: FOR HR / INTRODUCTORY / INTERNSHIP / VALUE PROPOSITION QUESTIONS" in prompt
+
+    def test_audio_coding_prompt_retains_coding_structure(self):
+        ctx = _make_context()
+        prompt = get_interview_answer_prompt("Given an array of ints, find two that sum to target", ctx)
+        assert "DETECTED QUESTION INTENT" not in prompt
+        assert "FOR CODING / ALGORITHM / DSA QUESTIONS" in prompt
+        assert "Optimal Solution" in prompt
+
+    def test_vision_prompt_includes_hr_template_and_prohibitions(self):
+        from services.vision_service import vision_service
+        ctx = _make_context(resume="Experienced full-stack engineer with React and Python internships.")
+        prompt = vision_service.generate_coding_analysis_prompt(["python"], context_manager=ctx)
+        
+        # Must include candidate profile
+        assert "Jane Doe" in prompt
+        assert "Experienced full-stack engineer" in prompt
+
+        # Must include SECTION 1 for HR questions with strict code prohibitions
+        assert "SECTION 1: HR / BEHAVIORAL / INTERVIEW QUESTION ANALYSIS & RESPONSE" in prompt
+        assert "DO NOT write any code blocks!" in prompt
+        assert "DO NOT mention Big-O Time/Space complexity!" in prompt
+        assert "Key Internship & Project Highlights" in prompt
+        assert "Value Proposition & Role Fit" in prompt
+
+        # Must also still support coding and MCQ
+        assert "SECTION 2: MULTIPLE CHOICE QUESTION (MCQ) ANALYSIS" in prompt
+        assert "SECTION 3: CODING / DSA PROBLEM ANALYSIS & SOLUTION" in prompt
+

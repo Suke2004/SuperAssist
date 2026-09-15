@@ -1,5 +1,6 @@
 import asyncio
 from urllib.parse import urlsplit
+import orjson
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from typing import Optional
@@ -73,26 +74,31 @@ async def websocket_endpoint(websocket: WebSocket, session_id: Optional[str] = Q
 
     try:
         while True:
-            message = await websocket.receive_json()
-            message_type = message.get("type")
-            payload = message.get("payload", {})
+            raw_msg = await websocket.receive()
+            if "bytes" in raw_msg and raw_msg["bytes"]:
+                # P1.1: Fast-path zero-copy binary audio frame
+                await session.handle_binary_audio(raw_msg["bytes"])
+            elif "text" in raw_msg and raw_msg["text"]:
+                message = orjson.loads(raw_msg["text"])
+                message_type = message.get("type")
+                payload = message.get("payload", {})
 
-            # Route message to the appropriate handler within the session
-            handler = getattr(session, f"handle_{message_type}", None)
-            if handler:
-                try:
-                    await handler(payload)
-                except Exception as handler_err:
-                    print(f"❌ Handler error in session {session.session_id} for '{message_type}': {handler_err}")
+                # Route message to the appropriate handler within the session
+                handler = getattr(session, f"handle_{message_type}", None)
+                if handler:
                     try:
-                        await send_json(websocket, "error", {
-                            "message": f"Error processing '{message_type}': {str(handler_err)[:200]}",
-                            "type": message_type
-                        })
-                    except Exception:
-                        pass  # Don't crash if we can't send the error
-            else:
-                print(f"⚠️ Unknown message type: {message_type}")
+                        await handler(payload)
+                    except Exception as handler_err:
+                        print(f"❌ Handler error in session {session.session_id} for '{message_type}': {handler_err}")
+                        try:
+                            await send_json(websocket, "error", {
+                                "message": f"Error processing '{message_type}': {str(handler_err)[:200]}",
+                                "type": message_type
+                            })
+                        except Exception:
+                            pass  # Don't crash if we can't send the error
+                else:
+                    print(f"⚠️ Unknown message type: {message_type}")
 
     except WebSocketDisconnect:
         print(f"WebSocket disconnected from session: {session.session_id}")
