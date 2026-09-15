@@ -107,6 +107,38 @@ class Metrics:
             },
         }
 
+    def save_to_disk(self, filepath: str = "metrics.json") -> None:
+        """Persists current metrics to disk safely using atomic write."""
+        import json
+        import os
+        import tempfile
+        try:
+            data = self.snapshot()
+            dirname = os.path.dirname(os.path.abspath(filepath))
+            fd, tmp_path = tempfile.mkstemp(dir=dirname, prefix="metrics_", suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, filepath)
+        except Exception as e:
+            print(f"Failed to persist metrics: {e}")
+
+    def load_from_disk(self, filepath: str = "metrics.json") -> None:
+        """Loads historical counters from disk if available."""
+        import json
+        import os
+        if not os.path.exists(filepath):
+            return
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            loaded_counters = data.get("counters", {})
+            with self._lock:
+                for k, v in loaded_counters.items():
+                    if isinstance(v, int):
+                        self._counters[k] = self._counters.get(k, 0) + v
+        except Exception as e:
+            print(f"Failed to load metrics from disk: {e}")
+
 
 # Single shared instance — imported by services, api and tests.
 app_metrics = Metrics()

@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # Deepgram nova-3 code-switching across languages.
     STT_LANGUAGE: str = "en"
 
+    # Window Management & Stealth Controls
+    SCROLL_SPEED_PX: int = 120
+    SCROLL_INTERVAL_MS: int = 50
+    SCREEN_SHARE_SCAN_INTERVAL_S: float = 3.0
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding='utf-8',

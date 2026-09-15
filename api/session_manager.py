@@ -441,6 +441,10 @@ class InterviewSession:
             return
 
         self._touch()
+        if isinstance(data, dict) and data.get("type") == "stt_status":
+            await self._send_json("stt_status", data)
+            return
+
         await self._send_json("transcript_update", data)
 
         transcript = data.get('transcript', '').strip()
@@ -620,7 +624,8 @@ class SessionManager:
         now = time.time()
         stale_ids = []
         
-        for sid, session in self.active_sessions.items():
+        # Concurrency safety: snapshot items list to avoid mutation during iteration
+        for sid, session in list(self.active_sessions.items()):
             if session.websocket is None:
                 idle_time = now - session.last_activity_time
                 if idle_time > SESSION_TTL_SECONDS:
@@ -633,7 +638,7 @@ class SessionManager:
                     await session.cleanup()
                 except Exception as e:
                     print(f"⚠️ Error cleaning up stale session {sid}: {e}")
-                del self.active_sessions[sid]
+                self.active_sessions.pop(sid, None)
                 print(f"🧹 Cleaned up stale session: {sid} (remaining: {len(self.active_sessions)})")
         
         if stale_ids:

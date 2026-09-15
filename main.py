@@ -498,6 +498,14 @@ class AsyncioServiceThread:
         # Stop the server
         await uvicorn_server.stop()
         
+        # Persist metrics to disk
+        try:
+            from api.metrics import app_metrics
+            app_metrics.save_to_disk()
+            print("💾 Metrics saved to disk")
+        except Exception as e:
+            print(f"⚠️ Could not save metrics: {e}")
+        
         print("✅ Async services cleanup complete")
 
 # Global asyncio service thread instance
@@ -591,6 +599,12 @@ def main():
     print("🚀 Starting SuperAssist with corrected asyncio-native architecture...")
     print("   📋 Architecture: pywebview on main thread, asyncio services in background thread")
     
+    try:
+        from api.metrics import app_metrics
+        app_metrics.load_from_disk()
+    except Exception as e:
+        print(f"⚠️ Could not load metrics: {e}")
+
     try:
         # Start the asyncio services in background thread.
         # C9: no blind sleep(2) here anymore — the services thread now waits

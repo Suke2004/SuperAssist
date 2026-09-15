@@ -1,4 +1,6 @@
 import asyncio
+from collections import deque
+from typing import Deque, Optional
 import httpx
 from deepgram import (
     DeepgramClient,
@@ -62,7 +64,9 @@ class DeepgramManager:
         # bounded number of attempts before we give up and raise.
         self._initial_connect_max_attempts = 3
         
-        # No buffering - process final results immediately for faster response
+        # P0.3: Circular audio ring buffer (~3.5s of audio @ ~47 chunks/s).
+        # Captures speech during transient network reconnects so words are never clipped.
+        self.audio_ring_buffer: Deque[bytes] = deque(maxlen=160)
         
         # Setup Deepgram client
         config = DeepgramClientOptions(
@@ -323,6 +327,7 @@ class DeepgramManager:
             self._reconnect_attempts += 1
             delay = self._reconnect_base_delay * (2 ** (self._reconnect_attempts - 1))
             print(f"🔄 Deepgram reconnect attempt {self._reconnect_attempts}/{self._max_reconnect_attempts} in {delay:.1f}s...")
+            await self._emit_status("reconnecting", f"Attempt {self._reconnect_attempts}/{self._max_reconnect_attempts}")
             await asyncio.sleep(delay)
 
             if self.stop_event.is_set():
@@ -340,10 +345,36 @@ class DeepgramManager:
 
         if self._reconnect_attempts >= self._max_reconnect_attempts:
             print(f"❌ Deepgram: max reconnect attempts ({self._max_reconnect_attempts}) reached, giving up")
+            await self._emit_status("failed", "Max reconnect attempts reached")
+
+    async def _emit_status(self, status: str, detail: str = ""):
+        """Emit STT connection health status to transcript callback."""
+        if getattr(self, "transcript_callback", None):
+            try:
+                await self.transcript_callback({
+                    "type": "stt_status",
+                    "status": status,
+                    "detail": detail
+                })
+            except Exception as e:
+                print(f"Failed to emit STT status: {e}")
 
     async def on_open(self, *args, **kwargs):
         print("🔗 Deepgram connection opened")
         self.is_connected = True
+        self._reconnect_attempts = 0
+        await self._emit_status("connected")
+        # Flush buffered audio accumulated during reconnection
+        ring_buf = getattr(self, "audio_ring_buffer", None)
+        if ring_buf and self.dg_connection:
+            while ring_buf:
+                chunk = ring_buf.popleft()
+                try:
+                    await self.dg_connection.send(chunk)
+                except Exception as e:
+                    print(f"Error flushing audio ring buffer: {e}")
+                    ring_buf.appendleft(chunk)
+                    break
 
     async def on_message(self, *args, **kwargs):
         if self.stop_event.is_set():
@@ -425,6 +456,7 @@ class DeepgramManager:
         error = kwargs.get('error', 'unknown')
         print(f"❌ Deepgram error: {error}")
         self.is_connected = False
+        await self._emit_status("reconnecting", f"Error: {error}")
         # Trigger auto-reconnect on error (singleflight-guarded in _reconnect)
         asyncio.create_task(self._reconnect())
 
@@ -435,12 +467,37 @@ class DeepgramManager:
         # so on_error + on_close firing together only produces one loop)
         if not self.stop_event.is_set():
             print("⚠️ Unexpected Deepgram close, attempting reconnect...")
+            await self._emit_status("reconnecting", "Connection closed unexpectedly")
             asyncio.create_task(self._reconnect())
 
     async def send_audio(self, audio_chunk, source='unknown'):
-        """Sends an audio chunk to Deepgram."""
-        if self.is_connected and self.dg_connection and not self.stop_event.is_set():
-            await self.dg_connection.send(audio_chunk)
+        """Sends an audio chunk to Deepgram, buffering if temporarily disconnected."""
+        if self.stop_event.is_set():
+            return
+
+        ring_buf = getattr(self, "audio_ring_buffer", None)
+
+        if self.is_connected and self.dg_connection:
+            # Flush ring buffer first if any frames accumulated during reconnect
+            if ring_buf:
+                while ring_buf:
+                    buffered = ring_buf.popleft()
+                    try:
+                        await self.dg_connection.send(buffered)
+                    except Exception as e:
+                        print(f"Error flushing buffered chunk: {e}")
+                        ring_buf.appendleft(buffered)
+                        break
+            try:
+                await self.dg_connection.send(audio_chunk)
+            except Exception as e:
+                print(f"Error sending live audio chunk, buffering: {e}")
+                if ring_buf is not None:
+                    ring_buf.append(audio_chunk)
+        else:
+            # Buffer audio while disconnected so speech is not lost during transient reconnects
+            if ring_buf is not None:
+                ring_buf.append(audio_chunk)
 
     async def finish(self):
         """Signals the connection to close and finishes it."""
