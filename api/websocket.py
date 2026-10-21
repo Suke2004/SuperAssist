@@ -6,7 +6,6 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from typing import Optional
 
 from .session_manager import session_manager
-from .utils import send_json
 from .metrics import app_metrics
 
 router = APIRouter()
@@ -62,7 +61,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: Optional[str] = Q
             session.websocket = websocket
             session.cancel_delayed_cleanup()  # A resumed session must not be torn down
             await websocket.accept()
-            await send_json(websocket, "session_resumed", {"session_id": session.session_id})
+            await session._send_json("session_resumed", {"session_id": session.session_id})
         else:
             print(f"⚠️ Session not found: {session_id}. Creating new session.")
     
@@ -70,7 +69,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: Optional[str] = Q
         await websocket.accept()
         session = session_manager.create_session()
         session.websocket = websocket
-        await send_json(websocket, "session_created", {"session_id": session.session_id})
+        await session._send_json("session_created", {"session_id": session.session_id})
 
     try:
         while True:
@@ -91,7 +90,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: Optional[str] = Q
                     except Exception as handler_err:
                         print(f"❌ Handler error in session {session.session_id} for '{message_type}': {handler_err}")
                         try:
-                            await send_json(websocket, "error", {
+                            await session._send_json("error", {
                                 "message": f"Error processing '{message_type}': {str(handler_err)[:200]}",
                                 "type": message_type
                             })
@@ -102,13 +101,17 @@ async def websocket_endpoint(websocket: WebSocket, session_id: Optional[str] = Q
 
     except WebSocketDisconnect:
         print(f"WebSocket disconnected from session: {session.session_id}")
-        session.websocket = None
-        app_metrics.inc("ws_disconnects")
-        # A5: schedule cleanup so the Deepgram connection doesn't stay open
-        # until the 30-min TTL when the client never comes back.
-        session_manager.schedule_delayed_cleanup(session.session_id, DISCONNECT_GRACE_SECONDS)
+        if session.clear_websocket(websocket):
+            app_metrics.inc("ws_disconnects")
+            # A5: schedule cleanup so the Deepgram connection doesn't stay open
+            # until the 30-min TTL when the client never comes back.
+            session_manager.schedule_delayed_cleanup(session.session_id, DISCONNECT_GRACE_SECONDS)
+        else:
+            print(f"Ignoring stale WebSocket disconnect for session: {session.session_id}")
     except Exception as e:
         print(f"Unhandled WebSocket error in session {session.session_id}: {e}")
-        session.websocket = None
-        app_metrics.inc("ws_disconnects")
-        session_manager.schedule_delayed_cleanup(session.session_id, DISCONNECT_GRACE_SECONDS)
+        if session.clear_websocket(websocket):
+            app_metrics.inc("ws_disconnects")
+            session_manager.schedule_delayed_cleanup(session.session_id, DISCONNECT_GRACE_SECONDS)
+        else:
+            print(f"Ignoring stale WebSocket error for session: {session.session_id}")

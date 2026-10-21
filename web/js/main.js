@@ -173,6 +173,12 @@ async function startInterview() {
                 'system-message'
             );
         });
+        window.addEventListener('superassist:no-system-audio', () => {
+            liveInterviewUI.addMessage(
+                '⚠️ System audio was NOT shared! The interviewer\'s voice will not be captured. To fix: End Interview, click Start Interview again, select "Entire Screen", and ensure "Also share system audio" is checked at the bottom-left.',
+                'system-error'
+            );
+        });
         window.__deviceLossListenersAttached = true;
     }
 

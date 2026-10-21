@@ -34,7 +34,7 @@
 | 🍎 **Full macOS Shortcut Parity** | First-class Mac keyboard support with complete `Option (⌥)` shortcuts documented alongside Windows `Alt` |
 | 🧠 **Dynamic Token Budgeting** | Automatic resume/JD token compaction bounds candidate profile size, accelerating Time-To-First-Token (TTFT) by over 60% |
 | 💾 **Durable Metrics & Unified Config** | Atomic crash-safe disk persistence for telemetry counters and unified configuration loaded via `core.config.settings` |
-| 🧪 **85 Automated Tests** | Comprehensive test coverage with 85 unit and integration tests passing across all layers |
+| 🧪 **Automated Tests** | Comprehensive unit and integration coverage across the backend, WebSocket, audio, security, persistence, and frontend-support layers |
 
 > **Upgrading?** Pull the latest codebase and run `pip install -r requirements.txt` — all changes are fully backward-compatible.
 

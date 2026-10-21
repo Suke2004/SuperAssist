@@ -31,6 +31,12 @@ TRANSCRIPT_BUFFER_MAX_CHARS = 4000
 # P3: bounded turn-by-turn record of the interview for export.
 TRANSCRIPT_LOG_MAX_TURNS = 500
 
+# Binary audio frames are normally 2,050 bytes (2-byte header plus 1,024
+# Linear16 samples). Keep a generous ceiling so malformed clients cannot
+# enqueue unbounded payloads or force excessive STT work.
+BINARY_AUDIO_HEADER_BYTES = 2
+MAX_BINARY_AUDIO_BYTES = 64 * 1024
+
 
 def classify_speaker(hint_timeline: Deque[Tuple[float, bool]], at_time: float,
                      window_seconds: float = HINT_WINDOW_SECONDS) -> str:
@@ -66,6 +72,7 @@ class InterviewSession:
     def __init__(self, session_id: str):
         self.session_id: str = session_id
         self.websocket: Optional[WebSocket] = None
+        self._send_lock = asyncio.Lock()
         self.llm_manager: Optional[MultiLLMManager] = None
         self.stt_manager: Optional[DeepgramManager] = None
         self.is_active: bool = False
@@ -78,6 +85,8 @@ class InterviewSession:
         self.silence_timer: Optional[asyncio.Task] = None
         self.last_activity_time: float = time.time()
         self._delayed_cleanup_task: Optional[asyncio.Task] = None
+        self._answer_tasks = set()
+        self._answer_lock = asyncio.Lock()
         # A1: rolling (timestamp, mic_dominant) hints, one per audio batch.
         # 200 entries at ~47 batches/s covers ~4s of history — well beyond
         # the 1.5s classification window.
@@ -100,11 +109,21 @@ class InterviewSession:
         """Update last activity time."""
         self.last_activity_time = time.time()
 
+    def clear_websocket(self, websocket: WebSocket) -> bool:
+        """Clear the socket only when it is still the session's active socket."""
+        if self.websocket is not websocket:
+            return False
+        self.websocket = None
+        return True
+
     async def _send_json(self, type: str, payload: dict):
         """Safely sends a JSON message to the client's websocket."""
-        if self.websocket:
-            self._touch()
-            await send_json(self.websocket, type, payload)
+        async with self._send_lock:
+            websocket = self.websocket
+            if websocket:
+                self._touch()
+                return await send_json(websocket, type, payload)
+        return False
 
     async def handle_verify_deepgram(self, payload: dict):
         """Handles the deepgram verification request from the client."""
@@ -166,11 +185,24 @@ class InterviewSession:
           - Bytes 2+: Linear16 PCM audio data
         """
         self._touch()
-        if self.state.get("is_universally_muted", False) or len(data) <= 2:
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            app_metrics.inc("invalid_audio_frames")
+            return
+        frame = bytes(data)
+        if (
+            len(frame) <= BINARY_AUDIO_HEADER_BYTES
+            or len(frame) > MAX_BINARY_AUDIO_BYTES
+            or (len(frame) - BINARY_AUDIO_HEADER_BYTES) % 2 != 0
+            or frame[0] not in (1, 2)
+            or frame[1] not in (0, 1)
+        ):
+            app_metrics.inc("invalid_audio_frames")
+            return
+        if self.state.get("is_universally_muted", False):
             return
 
-        speaker_flag = data[0]
-        muted_flag = data[1]
+        speaker_flag = frame[0]
+        muted_flag = frame[1]
         speaker_hint = 'microphone' if speaker_flag == 1 else 'system'
         is_mic_muted = (muted_flag == 1) or self.state.get("is_muted", False)
         self.state["is_muted"] = is_mic_muted
@@ -182,7 +214,7 @@ class InterviewSession:
             return
 
         if self.stt_manager:
-            audio_pcm = data[2:]
+            audio_pcm = frame[BINARY_AUDIO_HEADER_BYTES:]
             if audio_pcm:
                 await self.stt_manager.send_audio(audio_pcm)
 
@@ -364,7 +396,6 @@ class InterviewSession:
         
         self.llm_manager.initialize_candidate_context(onboarding_context)
         vision_service.set_context_manager(self.llm_manager.shared_context)
-        await self.llm_manager.perform_health_checks()
 
         vision_service.load_vision_providers(
             primary_config=primary_vision_config,
@@ -383,6 +414,22 @@ class InterviewSession:
 
     async def _process_aggregated_transcript(self):
         """Processes the buffered transcript after a period of silence."""
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._answer_tasks.add(current_task)
+
+        try:
+            # Multiple silence/mute triggers can arrive for one session while
+            # an answer is still streaming.  Serialize them; a later caller
+            # will process any transcript buffered while the first answer ran.
+            async with self._answer_lock:
+                await self._process_aggregated_transcript_once()
+        finally:
+            if current_task is not None:
+                self._answer_tasks.discard(current_task)
+
+    async def _process_aggregated_transcript_once(self):
+        """Process one buffered transcript while the session lock is held."""
         if not self.transcript_buffer:
             return
 
@@ -534,10 +581,26 @@ class InterviewSession:
 
     async def cleanup(self):
         """Cleans up resources for the session."""
-        if self.stt_manager:
-            await self.stt_manager.finish()
         if self.silence_timer and not self.silence_timer.done():
             self.silence_timer.cancel()
+        answer_tasks = [
+            task for task in self._answer_tasks
+            if task is not asyncio.current_task() and not task.done()
+        ]
+        for task in answer_tasks:
+            task.cancel()
+        if answer_tasks:
+            await asyncio.gather(*answer_tasks, return_exceptions=True)
+
+        try:
+            if self.stt_manager:
+                await self.stt_manager.finish()
+        finally:
+            if self.llm_manager:
+                try:
+                    await self.llm_manager.close()
+                except Exception as e:
+                    print(f"Warning: error closing LLM resources for session {self.session_id}: {e}")
         self.is_active = False
         print(f"Session {self.session_id} cleaned up.")
 

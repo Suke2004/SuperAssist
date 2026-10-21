@@ -33,7 +33,7 @@ class TestHistorySlicing:
         ctx = _make_context(exchanges=10)
         block = build_conversation_history_block(ctx.conversation_history)
         # Header must match the number actually printed (old bug: printed all)
-        assert f"LAST {settings.MAX_CONVERSATION_HISTORY} EXCHANGE" in block
+        assert f"last {settings.MAX_CONVERSATION_HISTORY} exchange(s)" in block
         # Older exchanges must NOT appear
         assert "Question 0?" not in block
         assert "Question 9?" in block
@@ -50,10 +50,10 @@ class TestPromptBuilders:
         prompt = get_interview_answer_prompt("Explain two sum", ctx)
         assert "Jane Doe" in prompt
         assert "Explain two sum" in prompt
-        # Templates are embedded for routing
-        assert "CODING / ALGORITHM / DSA" in prompt
-        assert "SYSTEM DESIGN" in prompt
-        assert "BEHAVIORAL" in prompt
+        # Definition-style questions use the compact concept rubric.
+        assert "ROUTING DECISION (already made by the application): CONCEPT" in prompt
+        assert "TECHNICAL CONCEPT TEMPLATE" in prompt
+        assert "CODING / ALGORITHM / DSA TEMPLATE" not in prompt
 
     def test_personalization_toggle_removes_resume(self):
         ctx = _make_context(resume="SECRET-RESUME-MARKER")
@@ -114,17 +114,16 @@ class TestHRQuestionDifferentiation:
     def test_audio_hr_prompt_includes_negative_coding_constraints(self):
         ctx = _make_context()
         prompt = get_interview_answer_prompt("Tell me about you self", ctx)
-        assert "DETECTED QUESTION INTENT: HR / BEHAVIORAL / PERSONAL / BACKGROUND QUESTION" in prompt
-        assert "STRICTLY DO NOT write any code blocks" in prompt
-        assert "STRICTLY DO NOT mention Big-O complexity" in prompt
-        assert "FORMAT A: FOR HR / INTRODUCTORY / INTERNSHIP / VALUE PROPOSITION QUESTIONS" in prompt
+        assert "ROUTING DECISION (already made by the application): BEHAVIORAL" in prompt
+        assert "BEHAVIORAL / HR / RESUME TEMPLATE" in prompt
+        assert "Do not include code" in prompt
 
     def test_audio_coding_prompt_retains_coding_structure(self):
         ctx = _make_context()
         prompt = get_interview_answer_prompt("Given an array of ints, find two that sum to target", ctx)
-        assert "DETECTED QUESTION INTENT" not in prompt
-        assert "FOR CODING / ALGORITHM / DSA QUESTIONS" in prompt
-        assert "Optimal Solution" in prompt
+        assert "ROUTING DECISION (already made by the application): CODING" in prompt
+        assert "CODING / ALGORITHM / DSA TEMPLATE" in prompt
+        assert "Optimal approach" in prompt
 
     def test_vision_prompt_includes_hr_template_and_prohibitions(self):
         from services.vision_service import vision_service
@@ -135,14 +134,9 @@ class TestHRQuestionDifferentiation:
         assert "Jane Doe" in prompt
         assert "Experienced full-stack engineer" in prompt
 
-        # Must include SECTION 1 for HR questions with strict code prohibitions
-        assert "SECTION 1: HR / BEHAVIORAL / INTERVIEW QUESTION ANALYSIS & RESPONSE" in prompt
-        assert "DO NOT write any code blocks!" in prompt
-        assert "DO NOT mention Big-O Time/Space complexity!" in prompt
-        assert "Key Internship & Project Highlights" in prompt
-        assert "Value Proposition & Role Fit" in prompt
-
-        # Must also still support coding and MCQ
-        assert "SECTION 2: MULTIPLE CHOICE QUESTION (MCQ) ANALYSIS" in prompt
-        assert "SECTION 3: CODING / DSA PROBLEM ANALYSIS & SOLUTION" in prompt
-
+        # The vision prompt now uses one explicit route contract and keeps
+        # behavioral answers free of coding sections.
+        assert "HR / BEHAVIORAL / PERSONAL" in prompt
+        assert "Never output code, Big-O, data structures, algorithms" in prompt
+        assert "CODING / ALGORITHM / DSA" in prompt
+        assert "MCQ" in prompt

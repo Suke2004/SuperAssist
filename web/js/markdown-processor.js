@@ -435,12 +435,16 @@ export class MarkdownProcessor {
         // Process in order of precedence
         // 1. Images (before links)
         text = text.replace(this.patterns.images, (match, alt, src) => {
-            return `<img class="markdown-image" src="${src}" alt="${alt}" />`;
+            const safeSrc = this.sanitizeUrl(src, true);
+            return safeSrc ? `<img class="markdown-image" src="${safeSrc}" alt="${alt}" />` : alt;
         });
         
         // 2. Links
         text = text.replace(this.patterns.links, (match, linkText, url) => {
-            return `<a class="markdown-link" href="${url}" target="_blank" rel="noopener noreferrer">${linkText}</a>`;
+            const safeUrl = this.sanitizeUrl(url, false);
+            return safeUrl
+                ? `<a class="markdown-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">${linkText}</a>`
+                : linkText;
         });
         
         // 3. Inline code (highest priority for text formatting - don't format inside)
@@ -517,6 +521,34 @@ export class MarkdownProcessor {
         });
         
         return processedText;
+    }
+
+    /**
+     * Allow only navigation/media URLs that cannot execute script in the HUD.
+     * Relative links are resolved against the current app origin; protocol-
+     * relative URLs are rejected so an attacker cannot choose a new scheme.
+     */
+    sanitizeUrl(value, image = false) {
+        if (typeof value !== 'string') return null;
+        const raw = value.trim();
+        if (!raw || raw.startsWith('//')) return null;
+
+        let parsed;
+        try {
+            parsed = new URL(raw, window.location.href);
+        } catch {
+            return null;
+        }
+
+        if (image) {
+            if (parsed.protocol === 'data:') {
+                return /^data:image\/[a-z0-9.+-]+;base64,/i.test(raw) ? raw : null;
+            }
+            return parsed.protocol === 'https:' ? parsed.href : null;
+        }
+
+        if (!['http:', 'https:', 'mailto:', 'tel:'].includes(parsed.protocol)) return null;
+        return parsed.href;
     }
 
     /**

@@ -139,6 +139,9 @@ class VisionManager:
         self._client_lock = threading.Lock()
         self._clients: Dict[int, AsyncOpenAI] = {}
         self.client: Optional[AsyncOpenAI] = None
+        self._request_semaphore = asyncio.Semaphore(
+            max(1, int(getattr(settings, "VISION_MAX_CONCURRENT_REQUESTS", 2)))
+        )
 
         if not self.api_keys:
             self.is_healthy = False
@@ -235,6 +238,16 @@ class VisionManager:
         return params
 
     async def analyze_screenshots(
+        self,
+        prompt: str,
+        screenshots: List[str],
+        languages: Optional[List[str]] = None,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Bound concurrent requests per vision manager."""
+        async with self._request_semaphore:
+            return await self._analyze_screenshots(prompt, screenshots, languages)
+
+    async def _analyze_screenshots(
         self,
         prompt: str,
         screenshots: List[str],

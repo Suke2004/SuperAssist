@@ -8,12 +8,24 @@ import threading
 import time
 from pathlib import Path
 
+# Resolve bundled files from the repository location, not the caller's CWD.
+_PROJECT_ROOT = Path(__file__).resolve().parent
+
+# Windows console code pages cannot encode the diagnostic emoji used by the
+# application. Reconfigure only when the stream supports it so startup logs do
+# not crash the server before FastAPI is available.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
+
 # --- Auto-create .env from .env.example if missing ---
 # This must run BEFORE any first-party import: window_manager and core.config
 # both read .env at import time, so creating it afterwards meant a freshly
 # generated .env had no effect until the next launch.
-_env_path = Path(".env")
-_env_example_path = Path(".env.example")
+_env_path = _PROJECT_ROOT / ".env"
+_env_example_path = _PROJECT_ROOT / ".env.example"
 
 if not _env_path.exists() and _env_example_path.exists():
     shutil.copy2(_env_example_path, _env_path)
@@ -30,14 +42,14 @@ import orjson
 import uvicorn
 import webview
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import window_manager  # Our new module for capture protection
 from api import websocket, config_api
 from api.metrics import app_metrics, APP_VERSION
 from api.session_manager import session_manager
-from core.config import settings, print_config_debug, APP_SESSION_TOKEN
+from core.config import settings, print_config_debug, APP_SESSION_TOKEN, project_path
 
 
 def find_free_port(preferred: int = 8002) -> int:
@@ -292,12 +304,18 @@ async def metrics():
     return JSONResponse(content=snapshot)
 
 # Mount the 'web' directory to serve static files (CSS, JS)
-app.mount("/static", StaticFiles(directory="web"), name="static")
+app.mount("/static", StaticFiles(directory=str(project_path("web"))), name="static")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Avoid a noisy 404 when browsers request the optional site icon."""
+    return Response(status_code=204)
 
 @app.get("/")
 async def read_index(request: Request):
     """Serves the main index.html file with injected session token for authentication."""
-    index_file = os.path.join('web', 'index.html')
+    index_file = str(project_path('web', 'index.html'))
     try:
         async with aiofiles.open(index_file, 'r', encoding='utf-8') as f:
             html = await f.read()

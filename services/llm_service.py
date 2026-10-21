@@ -1,9 +1,10 @@
 import orjson
 import asyncio
+import inspect
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
 from openai import AsyncOpenAI, APIStatusError, Timeout
-from core.config import settings
+from core.config import AI_PROVIDERS_PATH, settings
 from core.key_utils import usable_keys
 from core.error_utils import is_retryable_error
 from api.metrics import app_metrics
@@ -99,6 +100,19 @@ class LLMManager:
             self.last_error = str(e)
             self.error_count += 1
             return False
+
+    async def close(self) -> None:
+        """Close the provider client when the owning interview ends."""
+        client = self.client
+        self.client = None
+        if client is None:
+            return
+        close = getattr(client, "close", None)
+        if close is None:
+            return
+        result = close()
+        if inspect.isawaitable(result):
+            await result
 
     async def get_ai_answer(self, question: str, stream_callback=None, generate_full_answers: Optional[bool] = None) -> Tuple[str, Dict[str, Any]]:
         """Get AI answer with instant key rotation on any error — zero delay retries."""
@@ -285,7 +299,7 @@ class MultiLLMManager:
         """Load primary and optional secondary configurations"""
         try:
             # Load providers from JSON using high-performance orjson
-            with open("ai_providers.json", "rb") as f:
+            with AI_PROVIDERS_PATH.open("rb") as f:
                 providers_config = orjson.loads(f.read())
             
             # Setup primary provider
@@ -565,6 +579,19 @@ class MultiLLMManager:
         """Resets the conversation context."""
         if self.shared_context:
             self.shared_context.reset_conversation_history()
+
+    async def close(self) -> None:
+        """Close all provider clients owned by this manager."""
+        for manager in list(self.providers.values()):
+            close = getattr(manager, "close", None)
+            if close is None:
+                continue
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                print(f"Warning: error closing {getattr(manager, 'provider_name', 'provider')}: {exc}")
 
 # --- Standalone Verification Function ---
 

@@ -10,6 +10,9 @@ export class WebSocketHandler {
         this.reconnect_attempts = 0;
         this.max_reconnect_attempts = 5;
         this.is_intentionally_closing = false;
+        this.connection_timeout_ms = 10000;
+        this.connectionPromise = null;
+        this.reconnectTimer = null;
         this.checks = {};
         this.initializeCheckElements();
     }
@@ -28,51 +31,108 @@ export class WebSocketHandler {
     }
 
     connect() {
-        return new Promise((resolve, reject) => {
-            this.is_intentionally_closing = false;
-            // Derive the host from the page origin. main.py picks a free port at
-            // startup and falls back off 8002 when it is busy, so a hardcoded port
-            // would break the socket exactly when the fallback kicks in.
-            const host = window.location.host || '127.0.0.1:8002';
-            const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            let url = `${scheme}//${host}/ws`;
-            if (this.session_id) {
-                url += `?session_id=${this.session_id}`;
-            }
+        if (this.connectionPromise) {
+            return this.connectionPromise.promise;
+        }
 
-            this.updateCheckStatus(this.checks.backend, 'pending', 'Connecting...');
-            this.socket = new WebSocket(url);
-            this.stateManager.setSocket(this.socket);
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
 
-            // Store the promise's resolver to be called when session is confirmed.
-            this.resolveConnectionPromise = resolve;
+        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+            return Promise.resolve();
+        }
+
+        this.is_intentionally_closing = false;
+        // Derive the host from the page origin. main.py picks a free port at
+        // startup and falls back off 8002 when it is busy, so a hardcoded port
+        // would break the socket exactly when the fallback kicks in.
+        const host = window.location.host || '127.0.0.1:8002';
+        const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        let url = `${scheme}//${host}/ws`;
+        if (this.session_id) {
+            url += `?session_id=${this.session_id}`;
+        }
+
+        this.updateCheckStatus(this.checks.backend, 'pending', 'Connecting...');
+
+        let resolveConnection;
+        let rejectConnection;
+        const promise = new Promise((resolve, reject) => {
+            resolveConnection = resolve;
+            rejectConnection = reject;
+        });
+        this.connectionPromise = {
+            promise,
+            resolve: resolveConnection,
+            reject: rejectConnection,
+            timeout: null
+        };
+
+        try {
+            const socket = new WebSocket(url);
+            this.socket = socket;
+            this.stateManager.setSocket(socket);
 
             // Clear any old listeners before attaching new ones
-            this.socket.onopen = null;
-            this.socket.onclose = null;
-            this.socket.onerror = null;
-            this.socket.onmessage = null;
-            
+            socket.onopen = null;
+            socket.onclose = null;
+            socket.onerror = null;
+            socket.onmessage = null;
+
             // Use addEventListener for all events for consistency and robustness.
-            this.socket.addEventListener('open', this.onOpen.bind(this));
-            this.socket.addEventListener('close', this.onClose.bind(this));
-            this.socket.addEventListener('error', (err) => {
-                this.onError(err);
-                reject(new Error("WebSocket connection failed."));
-            });
-            this.socket.addEventListener('message', this.onMessage.bind(this));
-        });
+            socket.addEventListener('open', (event) => this.onOpen(event, socket));
+            socket.addEventListener('close', (event) => this.onClose(event, socket));
+            socket.addEventListener('error', (event) => this.onError(event, socket));
+            socket.addEventListener('message', (event) => this.onMessage(event, socket));
+
+            const pendingConnection = this.connectionPromise;
+            if (pendingConnection && pendingConnection.promise === promise) {
+                pendingConnection.timeout = setTimeout(() => {
+                    if (!this.connectionPromise || this.connectionPromise.promise !== promise) return;
+
+                    this._rejectConnection(new Error('WebSocket connection timed out.'));
+                    if (socket.readyState !== WebSocket.CLOSED) {
+                        socket.close();
+                    }
+                }, this.connection_timeout_ms);
+            }
+        } catch (error) {
+            this._rejectConnection(error);
+        }
+
+        return promise;
     }
 
-    onOpen(event) {
+    _resolveConnection() {
+        if (!this.connectionPromise) return;
+        const pending = this.connectionPromise;
+        this.connectionPromise = null;
+        clearTimeout(pending.timeout);
+        pending.resolve();
+    }
+
+    _rejectConnection(error) {
+        if (!this.connectionPromise) return;
+        const pending = this.connectionPromise;
+        this.connectionPromise = null;
+        clearTimeout(pending.timeout);
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+
+    onOpen(event, socket = this.socket) {
+        if (socket !== this.socket) return;
         console.log("[open] Connection established");
         // This is now handled by the ProviderManager
         // this.updateCheckStatus(this.checks.backend, 'success', 'Backend Connected');
         this.reconnect_attempts = 0;
     }
 
-    onClose(event) {
+    onClose(event, socket = this.socket) {
+        if (socket !== this.socket) return;
         console.log(`[close] Connection closed. Intentional: ${this.is_intentionally_closing}`);
+        this._rejectConnection(new Error("WebSocket connection closed before session establishment."));
         // This is now handled by the ProviderManager
         // this.updateCheckStatus(this.checks.backend, 'error', 'Disconnected');
         if (!this.is_intentionally_closing) {
@@ -80,13 +140,21 @@ export class WebSocketHandler {
         }
     }
 
-    onError(error) {
+    onError(error, socket = this.socket) {
+        if (socket !== this.socket) return;
         console.error(`[error] WebSocket error:`, error);
+        this._rejectConnection(new Error("WebSocket connection failed."));
+        // Ensure the failed socket reaches close before a reconnect is
+        // scheduled, so an error cannot leave an overlapping live attempt.
+        if (socket && !this.is_intentionally_closing && socket.readyState !== WebSocket.CLOSED) {
+            socket.close();
+        }
         // This is now handled by the ProviderManager
         // this.updateCheckStatus(this.checks.backend, 'error', 'Connection Failed');
     }
     
-    onMessage(event) {
+    onMessage(event, socket = this.socket) {
+        if (socket !== this.socket) return;
         const data = JSON.parse(event.data);
         devLog("Received from backend:", data);
 
@@ -94,31 +162,42 @@ export class WebSocketHandler {
             this.session_id = data.payload.session_id;
             console.log(`🚀 New session started: ${this.session_id}`);
             // Resolve the connection promise now that session is confirmed.
-            if (this.resolveConnectionPromise) {
-                this.resolveConnectionPromise();
-                this.resolveConnectionPromise = null; // Ensure it's only called once
-            }
+            this._resolveConnection();
         } else if (data.type === 'session_resumed') {
             console.log(`✅ Session resumed: ${data.payload.session_id}`);
             liveInterviewUI.addMessage("Connection restored. Your session has been resumed.", "system-message");
             // Also resolve the promise on resume.
-            if (this.resolveConnectionPromise) {
-                this.resolveConnectionPromise();
-                this.resolveConnectionPromise = null;
-            }
+            this._resolveConnection();
         }
         
         this.handleMessage(data);
     }
 
     handleReconnect() {
+        if (this.is_intentionally_closing || this.reconnectTimer || this.connectionPromise) {
+            return;
+        }
+
         if (this.reconnect_attempts < this.max_reconnect_attempts) {
             this.reconnect_attempts++;
             const delay = Math.pow(2, this.reconnect_attempts) * 1000;
             console.log(`Attempting to reconnect in ${delay / 1000}s... (Attempt ${this.reconnect_attempts})`);
             liveInterviewUI.addMessage(`Connection lost. Reconnecting... (Attempt ${this.reconnect_attempts})`, "system-error", true);
             
-            setTimeout(() => this.connect(), delay);
+            this.reconnectTimer = setTimeout(() => {
+                this.reconnectTimer = null;
+                if (this.is_intentionally_closing) return;
+
+                // Reconnect attempts are observed so a failed attempt cannot
+                // become an unhandled promise rejection. The close handler
+                // schedules the next attempt when the socket terminates.
+                this.connect().catch((error) => {
+                    console.warn('Reconnect attempt failed:', error);
+                    if (!this.is_intentionally_closing && !this.reconnectTimer) {
+                        this.handleReconnect();
+                    }
+                });
+            }, delay);
         } else {
             console.error("Max reconnect attempts reached.");
             liveInterviewUI.addMessage("Could not reconnect to the server. Please restart the interview.", "system-error");
@@ -127,6 +206,11 @@ export class WebSocketHandler {
 
     disconnect() {
         this.is_intentionally_closing = true;
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        this._rejectConnection(new Error("WebSocket connection intentionally closed."));
         if (this.socket) {
             this.socket.close();
         }

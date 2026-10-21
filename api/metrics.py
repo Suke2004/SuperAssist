@@ -35,6 +35,7 @@ _KNOWN_COUNTERS = (
     "answer_mode_full",
     "hint_answers",
     "stt_language_changes",
+    "invalid_audio_frames",
 )
 
 _START_MONOTONIC = time.monotonic()
@@ -107,11 +108,14 @@ class Metrics:
             },
         }
 
-    def save_to_disk(self, filepath: str = "metrics.json") -> None:
+    def save_to_disk(self, filepath: Optional[str] = None) -> None:
         """Persists current metrics to disk safely using atomic write."""
         import json
         import os
         import tempfile
+        if filepath is None:
+            from core.config import project_path
+            filepath = str(project_path("metrics.json"))
         try:
             data = self.snapshot()
             dirname = os.path.dirname(os.path.abspath(filepath))
@@ -122,10 +126,13 @@ class Metrics:
         except Exception as e:
             print(f"Failed to persist metrics: {e}")
 
-    def load_from_disk(self, filepath: str = "metrics.json") -> None:
+    def load_from_disk(self, filepath: Optional[str] = None) -> None:
         """Loads historical counters from disk if available."""
         import json
         import os
+        if filepath is None:
+            from core.config import project_path
+            filepath = str(project_path("metrics.json"))
         if not os.path.exists(filepath):
             return
         try:

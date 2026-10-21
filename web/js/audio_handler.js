@@ -22,6 +22,7 @@ let backupProcessor = null;
 let backupActive = false;
 let lastChunkTimestamp = 0;
 let lastSuspensionWarningTime = 0;
+let removeMicMuteListener = null;
 
 /**
  * Requests permission to use the microphone and populates the dropdown.
@@ -79,7 +80,17 @@ export async function startAudioProcessing(micId, onAudioData) {
         // On macOS WebKit or when system audio capture is unsupported/declined,
         // fall back gracefully so the interview session never hard-fails.
         try {
-            systemStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            systemStream = await navigator.mediaDevices.getDisplayMedia({
+                video: true,
+                audio: {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false
+                },
+                systemAudio: "include",
+                selfBrowserSurface: "exclude",
+                surfaceSwitching: "include"
+            });
         } catch (displayErr) {
             console.warn("⚠️ getDisplayMedia with audio failed or restricted, trying video-only (macOS fallback):", displayErr);
             try {
@@ -152,7 +163,7 @@ export async function startAudioProcessing(micId, onAudioData) {
         // system stream is clearly active, the mic signal is suspect: only call
         // it 'microphone' when the mic is decisively louder.
         const echoGuard = (micLevel, systemLevel) => {
-            if (systemLevel > 0.003 && micLevel < systemLevel * 2.5) {
+            if (systemLevel > 0.002 && micLevel < systemLevel * 2.5) {
                 return 'system';
             }
             return null; // no echo suspicion, let normal classification decide
@@ -174,7 +185,7 @@ export async function startAudioProcessing(micId, onAudioData) {
             if (muteManager.isMicrophoneMuted()) {
                 // When microphone is muted, candidate speech is completely silenced.
                 // Only send chunk if genuine system (interviewer) audio is detected.
-                if (systemLevel < 0.002) {
+                if (systemLevel < 0.0008) {
                     return;
                 }
                 speakerHint = 'system';
@@ -182,7 +193,7 @@ export async function startAudioProcessing(micId, onAudioData) {
                 const echoVerdict = echoGuard(micLevel, systemLevel);
                 if (echoVerdict) {
                     speakerHint = echoVerdict;
-                } else if (systemLevel > 0.003 && systemLevel >= micLevel * 0.7) {
+                } else if (systemLevel > 0.0015 && systemLevel >= micLevel * 0.6) {
                     // Digital interviewer audio active
                     speakerHint = 'system';
                 } else if (micLevel > 0.005 && micLevel > systemLevel * 1.2) {
@@ -190,7 +201,7 @@ export async function startAudioProcessing(micId, onAudioData) {
                     speakerHint = 'microphone';
                 } else {
                     // Default based on active audio energy
-                    speakerHint = systemLevel > 0.002 ? 'system' : 'microphone';
+                    speakerHint = systemLevel > 0.001 ? 'system' : 'microphone';
                 }
             }
 
@@ -207,19 +218,24 @@ export async function startAudioProcessing(micId, onAudioData) {
         updateMicGainNode(); // Set initial gain based on mute manager state
         
         // Listen for future changes
-        muteManager.on('microphoneMuteChange', updateMicGainNode);
+        if (removeMicMuteListener) {
+            removeMicMuteListener();
+        }
+        removeMicMuteListener = muteManager.on('microphoneMuteChange', updateMicGainNode);
         
         // Connect mic through gain node to input 0
         micSource.connect(micGainNode);
         micGainNode.connect(mixedProcessor, 0, 0);
         
         // System audio connects to input 1
-        if (systemStream && systemStream.getAudioTracks().length > 0) {
+        const systemAudioTracks = systemStream?.getAudioTracks?.() || [];
+        if (systemAudioTracks.length > 0) {
             const systemSource = audioContext.createMediaStreamSource(systemStream);
             systemSource.connect(mixedProcessor, 0, 1);
             console.log("🔊 System audio connected successfully to channel 1");
         } else {
             console.warn("⚠️ No system audio track found in display stream. If capturing interviewer voice, ensure 'Share audio' is checked.");
+            window.dispatchEvent(new CustomEvent('superassist:no-system-audio'));
             // Silent dummy source on channel 1 so mixed processor receives two inputs
             const dummyGain = audioContext.createGain();
             dummyGain.gain.value = 0;
@@ -227,7 +243,7 @@ export async function startAudioProcessing(micId, onAudioData) {
         }
 
         // Store the video track for screenshot reuse, but remove it from the stream
-        const videoTracks = systemStream.getVideoTracks();
+        const videoTracks = systemStream?.getVideoTracks?.() || [];
         if (videoTracks.length > 0) {
             screenVideoTrack = videoTracks[0];
             console.log("📹 Screen video track stored for screenshot reuse");
@@ -387,7 +403,13 @@ function startBackupAudioEngine(micStream, systemStream, onAudioData) {
 
     try {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        backupContext = new AudioCtx();
+        try {
+            backupContext = new AudioCtx({ sampleRate: TARGET_SAMPLE_RATE });
+        } catch (rateErr) {
+            console.warn('⚠️ Could not pin backup AudioContext sample rate:', rateErr);
+            backupContext = new AudioCtx();
+        }
+        console.log(`🎵 Backup AudioContext: ${backupContext.sampleRate}Hz`);
         backupContext.resume().catch(() => {});
 
         const bufferSize = 1024;
@@ -442,10 +464,10 @@ function startBackupAudioEngine(micStream, systemStream, onAudioData) {
                 let mixed;
                 if (sysRMS > 0.003 && micRMS > 0.01) {
                     mixed = sysSample + micSample * 0.12;
-                } else if (sysRMS > 0.002) {
+                } else if (sysRMS > 0.001) {
                     mixed = sysSample + micSample * 0.1;
                 } else {
-                    mixed = micSample;
+                    mixed = sysSample + micSample;
                 }
                 if (mixed > 1.0) mixed = 1.0;
                 else if (mixed < -1.0) mixed = -1.0;
@@ -456,14 +478,14 @@ function startBackupAudioEngine(micStream, systemStream, onAudioData) {
 
             let speakerHint = 'microphone';
             if (isMuted) {
-                if (sysRMS < 0.002) return;
+                if (sysRMS < 0.0008) return;
                 speakerHint = 'system';
-            } else if (sysRMS > 0.003 && sysRMS >= micRMS * 0.7) {
+            } else if (sysRMS > 0.0015 && sysRMS >= micRMS * 0.6) {
                 speakerHint = 'system';
             } else if (micRMS > 0.005 && micRMS > sysRMS * 1.2) {
                 speakerHint = 'microphone';
             } else {
-                speakerHint = sysRMS > 0.002 ? 'system' : 'microphone';
+                speakerHint = sysRMS > 0.001 ? 'system' : 'microphone';
             }
 
             lastChunkTimestamp = Date.now();
@@ -482,6 +504,10 @@ function startBackupAudioEngine(micStream, systemStream, onAudioData) {
  */
 export function stopAudioProcessing() {
     console.log("Stopping audio processing.");
+    if (removeMicMuteListener) {
+        removeMicMuteListener();
+        removeMicMuteListener = null;
+    }
     if (micStream) {
         micStream.getTracks().forEach(track => track.stop());
         micStream = null;

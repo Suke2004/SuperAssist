@@ -92,7 +92,7 @@ class TestTokenCompaction:
         long_text = "Word " * 1000  # 5000 chars
         compacted = _compact_text(long_text, 500)
         assert len(compacted) < 600
-        assert "compacted for token hygiene" in compacted
+        assert "remaining details compacted" in compacted
 
     def test_candidate_profile_compaction(self):
         """Huge resume and JD are bounded in build_unlimited_candidate_profile."""
@@ -107,6 +107,6 @@ class TestTokenCompaction:
         profile = build_unlimited_candidate_profile(context, include_personal_details=True)
         assert "Candidate Name: Alice" in profile
         assert "Target Company: Google" in profile
-        assert "compacted for token hygiene" in profile
+        assert "remaining details compacted" in profile
         # Whole profile should be safely bounded around 6000-7000 chars (~1500 tokens), not 30,000 chars!
         assert len(profile) < 8000

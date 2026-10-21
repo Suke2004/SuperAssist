@@ -1,11 +1,14 @@
 """Tests for metrics, WS origin check, and delayed session cleanup."""
 
 import asyncio
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from api.metrics import Metrics, app_metrics
-from api.session_manager import SessionManager
+from api.session_manager import InterviewSession, SessionManager
 from api.websocket import _origin_host_is_local
 
 
@@ -112,3 +115,144 @@ class TestDelayedCleanup:
         sm.schedule_delayed_cleanup(session.session_id, 0.05)  # replaces it
         await asyncio.sleep(0.15)
         assert session.session_id not in sm.active_sessions
+
+
+def test_stale_socket_disconnect_does_not_clear_new_socket():
+    session = InterviewSession("socket-race")
+    stale_socket = object()
+    current_socket = object()
+    session.websocket = current_socket
+
+    assert session.clear_websocket(stale_socket) is False
+    assert session.websocket is current_socket
+    assert session.clear_websocket(current_socket) is True
+    assert session.websocket is None
+
+
+@pytest.mark.asyncio
+async def test_session_sends_are_serialized_per_socket():
+    class BlockingWebSocket:
+        client_state = SimpleNamespace(name="CONNECTED")
+
+        def __init__(self):
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+            self.active = 0
+            self.max_active = 0
+            self.messages = []
+
+        async def send_text(self, message):
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            self.entered.set()
+            await self.release.wait()
+            self.messages.append(json.loads(message)["type"])
+            self.active -= 1
+
+    session = InterviewSession("send-lock")
+    websocket = BlockingWebSocket()
+    session.websocket = websocket
+
+    first = asyncio.create_task(session._send_json("first", {}))
+    await websocket.entered.wait()
+    second = asyncio.create_task(session._send_json("second", {}))
+    await asyncio.sleep(0)
+    assert websocket.max_active == 1
+
+    websocket.release.set()
+    await asyncio.gather(first, second)
+    assert websocket.max_active == 1
+    assert websocket.messages == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_answer_processing_is_single_flight_per_session():
+    class BlockingLLM:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.questions = []
+
+        async def get_ai_answer(self, question, stream_callback, generate_full_answers=None):
+            self.questions.append(question)
+            if len(self.questions) == 1:
+                self.started.set()
+                await self.release.wait()
+            return f"answer: {question}", {"success": True}
+
+    session = InterviewSession("answer-lock")
+    websocket = MagicMock()
+    websocket.client_state.name = "CONNECTED"
+    websocket.send_text = AsyncMock()
+    session.websocket = websocket
+    llm = BlockingLLM()
+    session.llm_manager = llm
+    session.transcript_buffer = "first question"
+
+    first = asyncio.create_task(session._process_aggregated_transcript())
+    await llm.started.wait()
+    session.transcript_buffer = "second question"
+    second = asyncio.create_task(session._process_aggregated_transcript())
+    await asyncio.sleep(0)
+    assert llm.questions == ["first question"]
+
+    llm.release.set()
+    await asyncio.gather(first, second)
+    assert llm.questions == ["first question", "second question"]
+
+
+@pytest.mark.asyncio
+async def test_interview_start_runs_one_provider_health_preflight(monkeypatch):
+    class StubLLM:
+        def __init__(self):
+            self.shared_context = object()
+            self.presets = {"primary": {}}
+            self.perform_health_checks = AsyncMock(return_value={"primary": True})
+
+        def load_configuration(self, **kwargs):
+            return True
+
+        def initialize_candidate_context(self, onboarding_context):
+            pass
+
+        def get_current_preset_info(self):
+            return {"key": "primary"}
+
+    class StubSTT:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def start(self):
+            pass
+
+    llm = StubLLM()
+    monkeypatch.setattr("api.session_manager.MultiLLMManager", lambda: llm)
+    monkeypatch.setattr("api.session_manager.DeepgramManager", StubSTT)
+    monkeypatch.setattr("api.session_manager.vision_service.set_context_manager", lambda context: None)
+    monkeypatch.setattr("api.session_manager.vision_service.load_vision_providers", lambda **kwargs: None)
+
+    session = InterviewSession("health-check")
+    websocket = MagicMock()
+    websocket.client_state.name = "CONNECTED"
+    websocket.send_text = AsyncMock()
+    session.websocket = websocket
+    await session.handle_start_interview({
+        "aiProvider": {"provider": "P", "model": "m"},
+        "onboardingData": {},
+    })
+
+    assert llm.perform_health_checks.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_session_cleanup_closes_llm_and_stt_resources():
+    session = InterviewSession("cleanup-resources")
+    session.llm_manager = MagicMock()
+    session.llm_manager.close = AsyncMock()
+    session.stt_manager = MagicMock()
+    session.stt_manager.finish = AsyncMock()
+
+    await session.cleanup()
+
+    session.stt_manager.finish.assert_awaited_once()
+    session.llm_manager.close.assert_awaited_once()

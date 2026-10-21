@@ -58,8 +58,9 @@ def _compact_text(text: str, max_chars: int) -> str:
 
 _HR_PATTERNS = [
     r"\btell\s+me\s+about\s+(yourself|your\s+background|your\s+journey|your\s+story|your\s+internship)",
+    r"\btell\s+me\s+about\s+you\s+(self|internship)\b",
     r"\b(introduce|walk)\s+(yourself|me\s+through\s+your\s+(resume|cv|background|experience))",
-    r"\b(why\s+(should\s+we\s+hire\s+you|do\s+you\s+want\s+to\s+join|this\s+company|our\s+company)|what\s+value\s+do\s+you\s+bring)",
+    r"\b(why\s+(should\s+we\s+hire\s+you|do\s+you\s+want\s+to\s+join|this\s+company|our\s+company)|what\s+value\s+(?:do\s+)?you\s+bring)",
     r"\b(strengths?|weaknesses?|career\s+goals?|culture\s+fit|work\s+ethic)\b",
     r"\bwhere\s+do\s+you\s+see\s+yourself\b",
     r"\b(tell|describe|give)\s+me\s+(about|an?\s+example\s+of)\s+(a\s+)?(time|situation|challenge|conflict|failure|project)",

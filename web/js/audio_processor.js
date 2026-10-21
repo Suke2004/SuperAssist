@@ -73,12 +73,12 @@ class MixedProcessor extends AudioWorkletProcessor {
             if (doubleTalk) {
                 // Both active: heavily duck mic into the clean interviewer stream
                 mixed = systemSample + micSample * micDuck;
-            } else if (sysRMS > 0.002) {
+            } else if (sysRMS > 0.001) {
                 // Interviewer solo: full clean signal, trace mic bleed
                 mixed = systemSample + micSample * 0.1;
             } else {
-                // Candidate solo
-                mixed = micSample;
+                // Quiet / candidate speaking: preserve both signals without silencing system audio
+                mixed = systemSample + micSample;
             }
 
             // Soft-knee saturation / clamp to prevent 16-bit PCM overflow

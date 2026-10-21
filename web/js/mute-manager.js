@@ -22,6 +22,23 @@ class MuteManager {
             this.eventListeners.set(eventName, []);
         }
         this.eventListeners.get(eventName).push(listener);
+
+        // Return a small unsubscribe function so short-lived interview
+        // resources can detach listeners when an interview ends.
+        return () => this.off(eventName, listener);
+    }
+
+    off(eventName, listener) {
+        const listeners = this.eventListeners.get(eventName);
+        if (!listeners) return;
+
+        const index = listeners.indexOf(listener);
+        if (index !== -1) {
+            listeners.splice(index, 1);
+        }
+        if (listeners.length === 0) {
+            this.eventListeners.delete(eventName);
+        }
     }
 
     emit(eventName, data) {

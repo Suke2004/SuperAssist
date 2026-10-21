@@ -1,7 +1,25 @@
 import os
 import secrets
+from pathlib import Path
+from typing import Any, Mapping
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import dotenv_values
+
+
+# Resolve persisted application files from this module's repository location,
+# rather than from whichever directory happens to launch the process.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def project_path(*parts: str) -> Path:
+    """Return a path inside the project root."""
+    return PROJECT_ROOT.joinpath(*parts)
+
+
+AI_PROVIDERS_PATH = project_path("ai_providers.json")
+AI_PROVIDERS_EXAMPLE_PATH = project_path("ai_providers.example.json")
+ENV_PATH = project_path(".env")
+EXPORTS_PATH = project_path("exports")
 
 # Ephemeral secret generated on process launch for local API authentication
 APP_SESSION_TOKEN: str = secrets.token_hex(16)
@@ -38,8 +56,15 @@ class Settings(BaseSettings):
     SCROLL_INTERVAL_MS: int = 50
     SCREEN_SHARE_SCAN_INTERVAL_S: float = 3.0
 
+    # Vision request bounds. These are configurable for slower machines and
+    # providers while keeping the default workload bounded.
+    VISION_MAX_CONCURRENT_REQUESTS: int = 2
+    VISION_MAX_SCREENSHOTS: int = 6
+    VISION_MAX_IMAGE_BYTES: int = 12 * 1024 * 1024
+    VISION_MAX_PROMPT_CHARS: int = 16000
+
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(ENV_PATH),
         env_file_encoding='utf-8',
         case_sensitive=True,
         extra='ignore'  # <-- This is the simple fix. It tells Pydantic to ignore unknown env vars.
@@ -47,12 +72,31 @@ class Settings(BaseSettings):
 
 # --- Manual Override for .env Priority ---
 # Load settings from .env file first
-env_settings = Settings(_env_file=".env", _env_file_encoding='utf-8')
+env_settings = Settings(_env_file=ENV_PATH, _env_file_encoding='utf-8')
 
 # Now create the final settings instance.
 # By passing `env_settings` as keyword arguments, we force its values to take
 # priority over any system environment variables that Pydantic would otherwise load.
 settings = Settings(**env_settings.model_dump())
+
+
+def reload_settings(overrides: Mapping[str, Any] | None = None) -> Settings:
+    """Reload settings in-place so existing imports observe updated values.
+
+    Returning a new ``Settings`` object alone would leave modules that imported
+    ``settings`` holding the old object.  Updating the existing model preserves
+    that import contract while allowing persisted values, such as a newly saved
+    Deepgram key, to take effect without restarting the process.
+    """
+    refreshed = Settings(
+        _env_file=ENV_PATH,
+        _env_file_encoding='utf-8',
+        **(dict(overrides) if overrides else {}),
+    )
+    object.__getattribute__(settings, "__dict__").update(
+        object.__getattribute__(refreshed, "__dict__")
+    )
+    return settings
 
 
 def print_config_debug():
@@ -61,7 +105,7 @@ def print_config_debug():
     
     # --- DEV_MODE Debugging ---
     raw_dev_mode_os = os.getenv('DEV_MODE', 'Not Set')
-    env_file_vals = dotenv_values(".env")
+    env_file_vals = dotenv_values(ENV_PATH)
     dev_mode_in_file = env_file_vals.get('DEV_MODE', 'Not found in .env')
 
     if raw_dev_mode_os != 'Not Set' and raw_dev_mode_os.lower() != str(settings.DEV_MODE).lower():

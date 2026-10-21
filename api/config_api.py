@@ -2,15 +2,25 @@ import orjson
 import aiofiles
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from core.config import settings
 from core.key_utils import resolve_provider_keys
 import window_manager
 from services.llm_service import verify_provider_connection
 from services.vision_service import verify_vision_provider_connection
-from core.env_utils import env_manager
 import shutil
 import os
+from pathlib import Path
+import tempfile
 from datetime import datetime
+
+from core.config import (
+    AI_PROVIDERS_EXAMPLE_PATH,
+    AI_PROVIDERS_PATH,
+    ENV_PATH,
+    EXPORTS_PATH,
+    reload_settings,
+    settings,
+)
+from core.env_utils import EnvManager
 
 router = APIRouter()
 
@@ -25,10 +35,38 @@ class ProviderVerifyRequest(BaseModel):
     model: str
 
 class SaveProvidersRequest(BaseModel):
-    providers: list
+    providers: list[dict]
 
 class SaveKeyRequest(BaseModel):
     key: str
+
+
+# Keep the existing module-level name for callers/tests that patch the manager,
+# while ensuring it points at the project-root .env file.
+env_manager = EnvManager(str(ENV_PATH))
+
+
+def _atomic_write_json(path: Path, payload: list[dict]) -> None:
+    """Write JSON beside the target and replace it atomically."""
+    temporary_path: str | None = None
+    try:
+        file_descriptor, temporary_path = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+        )
+        with os.fdopen(file_descriptor, "wb") as handle:
+            handle.write(orjson.dumps(payload, option=orjson.OPT_INDENT_2))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
 
 @router.get("/api/config")
 async def get_config():
@@ -49,14 +87,14 @@ async def get_ai_providers():
     to the frontend, excluding sensitive API keys.
     """
     try:
-        if not os.path.exists("ai_providers.json"):
-            if os.path.exists("ai_providers.example.json"):
+        if not AI_PROVIDERS_PATH.exists():
+            if AI_PROVIDERS_EXAMPLE_PATH.exists():
                 print("📝 ai_providers.json not found, creating from example...")
-                shutil.copy("ai_providers.example.json", "ai_providers.json")
+                shutil.copy2(AI_PROVIDERS_EXAMPLE_PATH, AI_PROVIDERS_PATH)
             else:
                 raise HTTPException(status_code=404, detail="ai_providers.json and example not found")
 
-        async with aiofiles.open("ai_providers.json", "rb") as f:
+        async with aiofiles.open(AI_PROVIDERS_PATH, "rb") as f:
             file_content = await f.read()
             providers = orjson.loads(file_content)
         
@@ -95,13 +133,13 @@ async def get_ai_providers_full():
     Used for the advanced configuration UI.
     """
     try:
-        if not os.path.exists("ai_providers.json"):
-             if os.path.exists("ai_providers.example.json"):
-                shutil.copy("ai_providers.example.json", "ai_providers.json")
-             else:
+        if not AI_PROVIDERS_PATH.exists():
+            if AI_PROVIDERS_EXAMPLE_PATH.exists():
+                shutil.copy2(AI_PROVIDERS_EXAMPLE_PATH, AI_PROVIDERS_PATH)
+            else:
                 return []
                 
-        async with aiofiles.open("ai_providers.json", "rb") as f:
+        async with aiofiles.open(AI_PROVIDERS_PATH, "rb") as f:
             file_content = await f.read()
             return orjson.loads(file_content)
     except Exception as e:
@@ -111,8 +149,7 @@ async def get_ai_providers_full():
 async def save_ai_providers(request: SaveProvidersRequest):
     """Saves the full provider configuration to ai_providers.json."""
     try:
-        async with aiofiles.open("ai_providers.json", "wb") as f:
-            await f.write(orjson.dumps(request.providers, option=orjson.OPT_INDENT_2))
+        _atomic_write_json(AI_PROVIDERS_PATH, request.providers)
         return {"success": True, "message": "AI Providers saved successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error saving provider config: {e}")
@@ -129,6 +166,7 @@ async def save_deepgram_key(request: SaveKeyRequest):
     try:
         success = env_manager.update_key("DEEPGRAM_API_KEY", request.key)
         if success:
+            reload_settings({"DEEPGRAM_API_KEY": request.key})
             return {"success": True, "message": "Deepgram API key saved successfully"}
         else:
             raise HTTPException(status_code=500, detail="Failed to update .env file")
@@ -142,7 +180,7 @@ async def verify_ai_provider(request: ProviderVerifyRequest):
     Tries all available apiKeys if the first one fails.
     """
     try:
-        async with aiofiles.open("ai_providers.json", "rb") as f:
+        async with aiofiles.open(AI_PROVIDERS_PATH, "rb") as f:
             file_content = await f.read()
             providers = orjson.loads(file_content)
         
@@ -180,7 +218,7 @@ async def verify_vision_ai_provider(request: ProviderVerifyRequest):
     Tries all available apiKeys if the first one fails.
     """
     try:
-        async with aiofiles.open("ai_providers.json", "rb") as f:
+        async with aiofiles.open(AI_PROVIDERS_PATH, "rb") as f:
             file_content = await f.read()
             providers = orjson.loads(file_content)
         
@@ -249,9 +287,9 @@ async def export_transcript(request: ExportTranscriptRequest):
     if not session.transcript_log:
         raise HTTPException(status_code=400, detail="No transcript recorded for this session")
 
-    os.makedirs("exports", exist_ok=True)
+    EXPORTS_PATH.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = os.path.join("exports", f"interview_{stamp}.txt")
+    path = EXPORTS_PATH / f"interview_{stamp}.txt"
 
     lines = [f"Interview transcript — {datetime.now().strftime('%Y-%m-%d %H:%M')}"]
     ctx = session.llm_manager.shared_context.get_complete_context() if session.llm_manager else {}

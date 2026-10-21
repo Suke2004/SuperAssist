@@ -30,14 +30,15 @@ def test_export_transcript_empty_log(client):
 
 
 def test_export_transcript_writes_file(client, tmp_path, monkeypatch):
+    import api.config_api as config_api
     from api.session_manager import session_manager
     session = session_manager.create_session()
     session.transcript_log = [
         {"speaker": "interviewer", "text": "what is two sum?", "timestamp": "2026-09-11T10:00:00"},
         {"speaker": "candidate", "text": "hash map approach", "timestamp": "2026-09-11T10:00:05"},
     ]
-    # Redirect exports into tmp_path so the test never writes to the repo root.
-    monkeypatch.chdir(tmp_path)
+    # Redirect the project-root export directory for test isolation.
+    monkeypatch.setattr(config_api, "EXPORTS_PATH", tmp_path / "exports")
     try:
         resp = client.post("/api/export-transcript", json={"session_id": session.session_id})
         assert resp.status_code == 200
