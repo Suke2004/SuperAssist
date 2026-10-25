@@ -309,6 +309,12 @@ class LiveInterviewUI {
         console.log('🎯 User manually resumed auto-scroll');
     }
 
+    scrollAnswers(amount) {
+        if (!this.conversationStream) return;
+        if (amount < 0) this.enterReadingMode();
+        this.conversationStream.scrollBy({ top: amount, behavior: 'auto' });
+    }
+
     setupScrollKeyboardShortcuts() {
         // Add keyboard shortcuts for scroll control
         document.addEventListener('keydown', (e) => {

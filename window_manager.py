@@ -811,7 +811,7 @@ class WindowManager:
         - Always on top but without focus
         - Hidden from taskbar / Dock
         
-        Use global hotkeys (Alt+Z, Alt+X, etc.) to interact safely.
+        Use Ctrl+Shift+Win shortcuts on Windows or Option shortcuts on macOS.
         """
         if not (self.is_windows or self.is_macos):
             print("❌ Proctoring stealth mode requires Windows or macOS")
@@ -839,11 +839,12 @@ class WindowManager:
             self.set_transparency(0.7)
             
             print("✅ PROCTORING STEALTH MODE ENABLED")
-            print("   🚨 IMPORTANT: Use ONLY global hotkeys to interact:")
+            print("   Use global hotkeys to interact:" if click_through else "   Mouse interaction and answer scrolling enabled.")
             print("   📌 Ctrl+Shift+Win+H (Mac Option+H): Toggle visibility (no focus change)")
             print("   📌 Ctrl+Shift+Win+K (Mac Option+X): Toggle ghost mode")
             print("   📌 Ctrl+Shift+Win+F1/F2/F3 (Mac Option+1/2/3): Adjust transparency")
-            print("   📌 DO NOT click on the window - it will trigger focus detection!")
+            if click_through:
+                print("   Clicks pass through the window; use the global scroll shortcuts.")
             
             return True
             

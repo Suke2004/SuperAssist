@@ -463,7 +463,7 @@ export class ProviderManager {
         const allChecks = [...requiredChecks, ...visibleOptionalChecks];
 
         // Check if all systems are green
-        const allSystemsGo = allChecks.every(check => {
+        const allSystemsGo = (document.getElementById('audio-capture-mode')?.value === 'native' || !document.getElementById('mic-select')?.disabled) && allChecks.every(check => {
             if (!check) return false;
             const indicator = check.querySelector('.indicator');
             return indicator && indicator.textContent === '🟢';

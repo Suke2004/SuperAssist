@@ -166,11 +166,51 @@ async def test_native_silence_reaches_stt_without_capturing_paused_audio(monkeyp
     monkeypatch.setattr('services.native_audio.asyncio.wait_for', timeout)
     await capture._consume()
     capture.on_audio.assert_awaited_once_with(bytes(44100))
+    capture.on_status.assert_awaited_once_with('waiting', '')
     capture.stopped = False
     capture.paused = True
     capture.on_audio.reset_mock()
     await capture._consume()
     capture.on_audio.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_native_output_starts_without_a_microphone_transcription_connection(monkeypatch):
+    session = InterviewSession('system-only')
+    session.audio_capture_mode = 'native'
+    session.microphone_available = False
+    manager = MagicMock(start=AsyncMock(), send_audio=AsyncMock())
+    factory = MagicMock(return_value=manager)
+    capture = MagicMock(open=AsyncMock(), sample_rate=48000)
+    monkeypatch.setattr('api.session_manager.DeepgramManager', factory)
+    monkeypatch.setattr('services.native_audio.NativeLoopback', MagicMock(return_value=capture))
+    monkeypatch.setattr('api.session_manager.MultiLLMManager', MagicMock())
+    monkeypatch.setattr('api.session_manager.vision_service.set_context_manager', MagicMock())
+    monkeypatch.setattr('api.session_manager.vision_service.load_vision_providers', MagicMock())
+    await session.initialize_managers({}, None, None, None, {})
+    assert session.is_active and session.stt_manager is manager and session.mic_stt_manager is None
+    factory.assert_called_once()
+    manager.start.assert_awaited_once()
+    await session._send_native_audio(b'\x01\x02')
+    manager.send_audio.assert_awaited_once_with(b'\x01\x02')
+
+
+@pytest.mark.asyncio
+async def test_native_playback_status_reports_signal_without_changing_pcm():
+    capture = NativeLoopback(AsyncMock(), AsyncMock())
+    capture.stream = MagicMock()
+    capture.channels = 1
+    capture.name = 'Headphones'
+    pcm = array('h', [100, -100, 0]).tobytes()
+    capture.queue.put_nowait(pcm)
+
+    async def stop_after_audio(data):
+        capture.stopped = True
+
+    capture.on_audio.side_effect = stop_after_audio
+    await capture._consume()
+    capture.on_audio.assert_awaited_once_with(pcm)
+    capture.on_status.assert_awaited_once_with('receiving', 'Headphones')
 
 
 @pytest.mark.asyncio

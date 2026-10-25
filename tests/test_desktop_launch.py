@@ -22,6 +22,19 @@ def test_desktop_window_starts_on_top(monkeypatch):
     assert create.call_args.args[1].startswith('http://127.0.0.1:')
 
 
+def test_interview_can_remain_interactive_and_click_through_is_explicit():
+    manager = main.window_manager.WindowManager()
+    manager.hwnd = 1
+    manager.set_ghost_mode = MagicMock()
+    manager.hide_from_taskbar = MagicMock()
+    manager.set_always_on_top = MagicMock()
+    manager.set_transparency = MagicMock()
+    assert manager.enable_proctoring_stealth_mode(click_through=False)
+    manager.set_ghost_mode.assert_called_with(False)
+    assert manager.enable_proctoring_stealth_mode()
+    manager.set_ghost_mode.assert_called_with(True)
+
+
 def test_new_desktop_name_preserves_configured_title(monkeypatch):
     assert main._default_title == 'VeyraCue'
     manager = main.window_manager.window_manager

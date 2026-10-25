@@ -193,7 +193,7 @@ class GlobalCommandMonitor:
                     amount = 90
                 # Use smooth scrolling with the specified amount
                 scroll_amount = -amount if direction == 'up' else amount
-                js_code = f'var el = document.getElementById("conversation-stream"); if (el) {{ el.scrollBy({{ top: {scroll_amount}, left: 0, behavior: "smooth" }}); }}'
+                js_code = f'if (window.liveInterviewUI) {{ window.liveInterviewUI.scrollAnswers({scroll_amount}); }}'
                 self._execute_browser_command(js_code)
             elif command == 'context_aware_action':
                 action = command_data.get('action', '')

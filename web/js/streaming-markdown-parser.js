@@ -300,6 +300,7 @@ export class StreamingMarkdownParser {
     finalize() {
         // Apply final thinking content filter to buffer
         this.buffer = this.filterThinkingContent(this.buffer);
+        if (!this.buffer.trim()) return '';
         
         // Process the entire buffer one final time
         try {
@@ -380,4 +381,4 @@ export class StreamingMarkdownParser {
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#039;');
     }
-} 
+}

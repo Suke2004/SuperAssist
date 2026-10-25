@@ -1,6 +1,7 @@
 """Windows output capture, independent of screen sharing and browser throttling."""
 import asyncio
 import sys
+import time
 from array import array
 
 try:
@@ -38,6 +39,9 @@ class NativeLoopback:
         self.audio = None
         self.stream = None
         self.sample_rate = None
+        self.name = ''
+        self._last_signal = 0.0
+        self._last_level_report = 0.0
         self.task = None
         self.stopped = False
         self.paused = False
@@ -116,10 +120,20 @@ class NativeLoopback:
                     data = await asyncio.wait_for(self.queue.get(), timeout=0.5)
                 except asyncio.TimeoutError:
                     # WASAPI can omit silent frames; STT still needs silence to end an utterance.
-                    if not self.paused:
-                        await self.on_audio(bytes(self.sample_rate))  # 500ms of mono Linear16.
+                    if self.paused:
+                        continue
+                    pcm = bytes(self.sample_rate)  # 500ms of mono Linear16.
+                else:
+                    pcm = mono_pcm(data, self.channels)
+                if self.paused:
                     continue
-                await self.on_audio(mono_pcm(data, self.channels))
+                await self.on_audio(pcm)
+                now = time.monotonic()
+                if max(map(abs, array('h', pcm)), default=0) > 16:
+                    self._last_signal = now
+                if now - self._last_level_report >= 1:
+                    self._last_level_report = now
+                    await self.on_status('receiving' if now - self._last_signal < 1 else 'waiting', self.name)
                 if self.dropped:
                     lost, self.dropped = self.dropped, 0
                     await self.on_status("gap", f"Audio overrun: {lost} frame(s) lost. Check network and system load.")

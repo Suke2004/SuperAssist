@@ -101,6 +101,7 @@ class InterviewSession:
         self.auto_answer_enabled: bool = True
         self.audio_capture_mode = "browser"
         self.audio_output = ""
+        self.microphone_available = True
         self.native_audio = None
         self.mic_stt_manager = None
         self._health_task = None
@@ -157,10 +158,12 @@ class InterviewSession:
             onboarding_context = payload.get('onboardingData', {})
             capture_mode = payload.get('audioCaptureMode', 'browser')
             output = payload.get('audioOutput', '')
-            if capture_mode not in ('browser', 'native') or not isinstance(output, str) or len(output) > 512:
+            microphone_available = payload.get('microphoneAvailable', True)
+            if capture_mode not in ('browser', 'native') or not isinstance(output, str) or len(output) > 512 or not isinstance(microphone_available, bool):
                 raise ValueError('Invalid audio capture settings.')
             self.audio_capture_mode = capture_mode
             self.audio_output = output
+            self.microphone_available = microphone_available
 
             # P1: STT language chosen in onboarding ('en' | 'multi').
             stt_language = payload.get('sttLanguage')
@@ -491,7 +494,8 @@ class InterviewSession:
             self.native_audio.paused = bool(self.state.get('is_universally_muted'))
             self.stt_manager = DeepgramManager(self._system_transcript, user_languages,
                 language=stt_language, sample_rate=self.native_audio.sample_rate)
-            self.mic_stt_manager = DeepgramManager(self._microphone_transcript, user_languages, language=stt_language)
+            if self.microphone_available:
+                self.mic_stt_manager = DeepgramManager(self._microphone_transcript, user_languages, language=stt_language)
         else:
             self.stt_manager = DeepgramManager(self.on_transcript, user_languages, language=stt_language)
         starts = [asyncio.create_task(manager.start()) for manager in (self.stt_manager, self.mic_stt_manager) if manager]

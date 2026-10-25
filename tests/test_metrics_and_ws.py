@@ -230,6 +230,8 @@ async def test_interview_start_runs_one_provider_health_preflight(monkeypatch):
     monkeypatch.setattr("api.session_manager.DeepgramManager", StubSTT)
     monkeypatch.setattr("api.session_manager.vision_service.set_context_manager", lambda context: None)
     monkeypatch.setattr("api.session_manager.vision_service.load_vision_providers", lambda **kwargs: None)
+    appearance = MagicMock(return_value=True)
+    monkeypatch.setattr('window_manager.window_manager.enable_proctoring_stealth_mode', appearance)
 
     session = InterviewSession("health-check")
     websocket = MagicMock()
@@ -243,6 +245,7 @@ async def test_interview_start_runs_one_provider_health_preflight(monkeypatch):
 
     await session._health_task
     assert llm.perform_health_checks.await_count == 1
+    appearance.assert_called_once_with(click_through=False)
 
 
 @pytest.mark.asyncio

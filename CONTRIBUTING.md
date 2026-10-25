@@ -1,6 +1,6 @@
-# 🤝 Contributing to SuperAssist
+# 🤝 Contributing to VeyraCue
 
-First off — **thank you** for wanting to contribute! Every bug report, feature idea, and pull request makes SuperAssist better for everyone.
+First off — **thank you** for wanting to contribute! Every bug report, feature idea, and pull request makes VeyraCue better for everyone.
 
 ---
 
@@ -127,3 +127,7 @@ Open a GitHub issue or start a Discussion — we're happy to help!
 ---
 
 **⭐ Star the repo if you find Aura useful — it helps more people discover it!**
+
+## Current desktop validation
+
+Use `venv\Scripts\python.exe -m pytest -q` for backend checks. Browser regression scripts in `tests/` cover dark layout, answer scrolling, microphone-optional native startup, audio transport, and current Windows hotkeys. Keep `.env`, `ai_providers.json`, transcript exports, and runtime `output/` artifacts out of commits. The current user workflow and complete shortcut list are in [README.md](README.md).

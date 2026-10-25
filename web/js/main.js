@@ -110,7 +110,7 @@ function handleOnboarding() {
 async function runPreFlightChecks() {
     await loadAudioOutputs();
     // --- 1. Microphone Check ---
-    // First, ensure we have microphone permissions as this is a prerequisite.
+    // Native output capture must not depend on browser microphone permission.
     const micPermissionCheck = document.getElementById('check-mic-permission');
     const micSelectionCheck = document.getElementById('check-mic-selection');
 
@@ -119,6 +119,11 @@ async function runPreFlightChecks() {
     if (micPermission) {
         providerManager.webSocketHandler.updateCheckStatus(micPermissionCheck, 'success', 'Microphone Permission OK');
         providerManager.webSocketHandler.updateCheckStatus(micSelectionCheck, 'success', 'Microphone Selection Ready');
+    } else if (document.getElementById('audio-capture-mode').value === 'native') {
+        micSelect.replaceChildren(new Option('Microphone unavailable — system audio only', ''));
+        micSelect.disabled = true;
+        providerManager.webSocketHandler.updateCheckStatus(micPermissionCheck, 'success', 'Microphone optional — Windows system audio available');
+        providerManager.webSocketHandler.updateCheckStatus(micSelectionCheck, 'success', 'System audio only');
     } else {
         providerManager.webSocketHandler.updateCheckStatus(micPermissionCheck, 'error', 'Microphone Permission Denied');
         providerManager.webSocketHandler.updateCheckStatus(micSelectionCheck, 'error', 'Microphone Selection Failed');
@@ -196,7 +201,8 @@ async function startInterview() {
     };
 
     const nativeCapture = document.getElementById('audio-capture-mode').value === 'native';
-    const processingStarted = await startAudioProcessing(micSelect.value, onAudioData, !nativeCapture);
+    const processingStarted = nativeCapture && micSelect.disabled ? false
+        : await startAudioProcessing(micSelect.value, onAudioData, !nativeCapture);
 
     if (!processingStarted && !nativeCapture) {
         console.error("❌ Could not start audio streams. Please check permissions and try again.");
@@ -212,7 +218,7 @@ async function startInterview() {
     }
 
     try {
-        await webSocketHandler.startInterview();
+        await webSocketHandler.startInterview(processingStarted);
     } catch (error) {
         stopAudioProcessing();
         hotkeyManager.setEnabled(false);
@@ -443,6 +449,7 @@ function updateAudioCaptureHelp() {
     document.getElementById('audio-capture-help').textContent = native
         ? 'No screen-sharing prompt is needed. Play meeting or YouTube audio through the selected headphones/speakers. System sound is captured directly, separately from your microphone. After changing output devices, restart the session.'
         : 'Choose your meeting browser tab and enable Share audio. For a desktop meeting, share the entire screen with system audio. Use headphones.';
+    providerManager.checkAllSystemsGo();
 }
 
 // Delegated copy handler for all code blocks

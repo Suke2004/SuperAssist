@@ -470,7 +470,8 @@ export class WebSocketHandler {
     }
 
     updateAudioHealth(source, payload) {
-        this.audioHealth[source] = payload.status;
+        this.audioHealth[source] = ['receiving', 'waiting'].includes(payload.status)
+            ? `${payload.status === 'receiving' ? 'audio detected' : 'waiting for playback'} (${payload.detail})` : payload.status;
         const health = document.getElementById('audio-health');
         if (health) {
             health.hidden = false;
@@ -498,13 +499,14 @@ export class WebSocketHandler {
         return btoa(binary);
     }
 
-    async startInterview() {
+    async startInterview(microphoneAvailable = true) {
         const state = this.stateManager.getState();
         const initialMuteStatus = window.muteManager?.getMuteStatus() || { microphone: false, universal: false };
         
         const interviewPayload = {
             audioCaptureMode: document.getElementById('audio-capture-mode')?.value || 'browser',
             audioOutput: document.getElementById('audio-output-select')?.value || '',
+            microphoneAvailable,
             sttLanguage: state.sttLanguage || 'en', // P1: transcription language
             aiProvider: {
                 provider: state.selectedProvider.name,
