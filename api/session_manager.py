@@ -3,6 +3,7 @@ import uuid
 import asyncio
 import base64
 import time
+import sys
 from datetime import datetime
 from collections import deque
 from typing import Any, Deque, Dict, List, Optional, Tuple
@@ -103,6 +104,8 @@ class InterviewSession:
         self.audio_output = ""
         self.microphone_available = True
         self.native_audio = None
+        self.native_microphone = None
+        self.audio_input = ''
         self.mic_stt_manager = None
         self._health_task = None
         # P1: STT language for this session ('en' or 'multi').
@@ -159,11 +162,15 @@ class InterviewSession:
             capture_mode = payload.get('audioCaptureMode', 'browser')
             output = payload.get('audioOutput', '')
             microphone_available = payload.get('microphoneAvailable', True)
+            audio_input = payload.get('audioInput', '')
             if capture_mode not in ('browser', 'native') or not isinstance(output, str) or len(output) > 512 or not isinstance(microphone_available, bool):
                 raise ValueError('Invalid audio capture settings.')
+            if not isinstance(audio_input, str) or len(audio_input) > 512:
+                raise ValueError('Invalid microphone settings.')
             self.audio_capture_mode = capture_mode
             self.audio_output = output
             self.microphone_available = microphone_available
+            self.audio_input = audio_input
 
             # P1: STT language chosen in onboarding ('en' | 'multi').
             stt_language = payload.get('sttLanguage')
@@ -177,6 +184,14 @@ class InterviewSession:
             await self.initialize_managers(primary_provider_config, secondary_provider_config, primary_vision_config, secondary_vision_config, onboarding_context)
             if self.native_audio:
                 await self.native_audio.start()
+            if self.native_microphone:
+                try:
+                    await self.native_microphone.start()
+                except Exception as error:
+                    await asyncio.gather(self.native_microphone.finish(), self.mic_stt_manager.finish(), return_exceptions=True)
+                    self.native_microphone = self.mic_stt_manager = None
+                    await self._send_json('audio_capture_status', {'source': 'microphone', 'status': 'failed',
+                        'detail': f'Microphone unavailable; meeting audio continues. Check system microphone permission: {error}'})
             if not await self._send_json("interview_started", {"audio_capture_mode": self.audio_capture_mode}):
                 await self.cleanup()
                 return
@@ -303,13 +318,16 @@ class InterviewSession:
             self.state["is_universally_muted"] = now_universally_muted
             if self.native_audio:
                 self.native_audio.paused = bool(now_universally_muted)
+            if self.native_microphone:
+                self.native_microphone.paused = bool(now_universally_muted or self.state.get('is_muted'))
             if now_universally_muted:
                 for manager in (self.stt_manager, self.mic_stt_manager):
                     if manager and hasattr(manager, 'clear_audio_buffer'):
                         await manager.clear_audio_buffer()
-                if self.native_audio:
-                    while not self.native_audio.queue.empty():
-                        self.native_audio.queue.get_nowait()
+                for capture in (self.native_audio, self.native_microphone):
+                    if capture:
+                        while not capture.queue.empty():
+                            capture.queue.get_nowait()
                 if self.silence_timer:
                     self.silence_timer.cancel()
                     self.silence_timer = None
@@ -318,6 +336,11 @@ class InterviewSession:
         if 'is_muted' in payload:
             now_mic_muted = payload['is_muted']
             self.state["is_muted"] = now_mic_muted
+            if self.native_microphone:
+                self.native_microphone.paused = bool(now_mic_muted or self.state.get('is_universally_muted'))
+                if now_mic_muted:
+                    while not self.native_microphone.queue.empty():
+                        self.native_microphone.queue.get_nowait()
             if now_mic_muted:
                 if self.mic_stt_manager:
                     await self.mic_stt_manager.clear_audio_buffer()
@@ -489,13 +512,28 @@ class InterviewSession:
         stt_language = self.stt_language or getattr(settings, 'STT_LANGUAGE', 'en')
         if self.audio_capture_mode == 'native':
             from services.native_audio import NativeLoopback
-            self.native_audio = NativeLoopback(self._send_native_audio, self._native_audio_status, self.audio_output)
+            if sys.platform in ('darwin', 'linux'):
+                from services.portable_audio import PortableCapture
+                self.native_audio = PortableCapture(self._send_native_audio, self._native_audio_status, self.audio_output)
+            else:
+                self.native_audio = NativeLoopback(self._send_native_audio, self._native_audio_status, self.audio_output)
             await self.native_audio.open()
             self.native_audio.paused = bool(self.state.get('is_universally_muted'))
             self.stt_manager = DeepgramManager(self._system_transcript, user_languages,
                 language=stt_language, sample_rate=self.native_audio.sample_rate)
             if self.microphone_available:
-                self.mic_stt_manager = DeepgramManager(self._microphone_transcript, user_languages, language=stt_language)
+                if sys.platform in ('darwin', 'linux'):
+                    self.native_microphone = PortableCapture(self._send_native_microphone_audio,
+                        self._native_microphone_status, self.audio_input, microphone=True)
+                    try:
+                        await self.native_microphone.open()
+                        self.native_microphone.paused = bool(self.state.get('is_muted') or self.state.get('is_universally_muted'))
+                    except Exception as error:
+                        await self.native_microphone.finish()
+                        self.native_microphone = None
+                        await self._native_microphone_status('failed', f'Microphone unavailable; meeting audio continues: {error}')
+                if sys.platform not in ('darwin', 'linux') or self.native_microphone:
+                    self.mic_stt_manager = DeepgramManager(self._microphone_transcript, user_languages, language=stt_language)
         else:
             self.stt_manager = DeepgramManager(self.on_transcript, user_languages, language=stt_language)
         starts = [asyncio.create_task(manager.start()) for manager in (self.stt_manager, self.mic_stt_manager) if manager]
@@ -524,6 +562,13 @@ class InterviewSession:
 
     async def _native_audio_status(self, status, detail):
         await self._send_json('audio_capture_status', {'status': status, 'detail': detail, 'source': 'system'})
+
+    async def _send_native_microphone_audio(self, pcm):
+        if self.is_active and not self.state.get('is_muted') and not self.state.get('is_universally_muted') and self.mic_stt_manager:
+            await self.mic_stt_manager.send_audio(pcm)
+
+    async def _native_microphone_status(self, status, detail):
+        await self._send_json('audio_capture_status', {'status': status, 'detail': detail, 'source': 'microphone'})
 
     async def _system_transcript(self, data):
         await self.on_transcript({**data, 'speaker_role': 'interviewer', 'source': 'system'})
@@ -748,11 +793,12 @@ class InterviewSession:
             await asyncio.gather(self._health_task, return_exceptions=True)
         self._health_task = None
         try:
-            resources = [resource for resource in (self.native_audio, self.mic_stt_manager, self.stt_manager) if resource]
+            resources = [resource for resource in (self.native_audio, self.native_microphone, self.mic_stt_manager, self.stt_manager) if resource]
             for result in await asyncio.gather(*(resource.finish() for resource in resources), return_exceptions=True):
                 if isinstance(result, Exception):
                     print(f'Audio cleanup error: {result}')
             self.native_audio = None
+            self.native_microphone = None
             self.mic_stt_manager = None
         finally:
             if self.llm_manager:

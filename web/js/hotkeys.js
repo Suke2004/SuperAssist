@@ -5,9 +5,21 @@ import { devLog } from './config.js';
 import muteManager from './mute-manager.js';
 import liveInterviewUI from './live-interview.js';
 
-export const isAppShortcut = event => /Mac/.test(navigator.platform)
-    ? event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey
-    : event.ctrlKey && event.shiftKey && event.metaKey && !event.altKey;
+export const isAppShortcut = event => !event.defaultPrevented && !window.__nativeHotkeys && (/Mac/.test(navigator.platform)
+    ? event.altKey && !event.ctrlKey && !event.metaKey && (!event.shiftKey || !!window.pywebview?.api)
+    : event.ctrlKey && event.shiftKey && event.metaKey && !event.altKey);
+
+const shortcutCode = event => {
+    const special = { ArrowLeft: 0x25, ArrowUp: 0x26, ArrowRight: 0x27, ArrowDown: 0x28,
+        PageUp: 0x21, PageDown: 0x22, F1: 0x70, F2: 0x71, F3: 0x72, BracketLeft: 0xDB, BracketRight: 0xDD };
+    if (/Mac/.test(navigator.platform)) {
+        if (event.shiftKey) return { KeyS: 89, Comma: 0x25, Period: 0x27, KeyU: 0x26, KeyD: 0x28 }[event.code];
+        const mac = { KeyX: 75, KeyZ: 72, Digit1: 0x70, Digit2: 0x71, Digit3: 0x72,
+            Comma: 0x21, Period: 0x22, ArrowUp: 0x21, ArrowDown: 0x22, KeyI: 0x26, KeyJ: 0x28 };
+        if (mac[event.code]) return mac[event.code];
+    }
+    return special[event.code] || (/^Key[HKVSPRQWETMUYOG]$/.test(event.code) ? event.code.charCodeAt(3) : undefined);
+};
 
 class HotkeyManager {
     constructor() {
@@ -28,6 +40,14 @@ class HotkeyManager {
 
     handleKeyDown(event) {
         if (!this.isEnabled || !isAppShortcut(event) || event.repeat) return;
+        if (window.pywebview?.api && /Mac|Linux/.test(navigator.platform)) {
+            const code = shortcutCode(event);
+            if (code !== undefined) {
+                event.preventDefault();
+                window.pywebview.api.shortcut(code);
+            }
+            return;
+        }
 
         // Note: Ctrl+Shift+Win+M and Ctrl+Shift+Win+U are handled by global hotkeys only to prevent conflicts
         
@@ -59,6 +79,10 @@ class HotkeyManager {
     }
 
     handleKeyUp(event) {
+        if (window.pywebview?.api && /Mac|Linux/.test(navigator.platform) &&
+            ([0x21, 0x22].includes(shortcutCode(event)) || ['Alt', 'Control', 'Shift', 'Meta'].includes(event.key))) {
+            window.pywebview.api.stop_scrolling();
+        }
         // This method is kept for event listener consistency, but is currently empty.
     }
 

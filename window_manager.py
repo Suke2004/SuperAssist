@@ -8,11 +8,14 @@ import os
 import ctypes
 import webview
 import time
-import tkinter as tk
+import threading
 import platform
 from typing import Optional
 from threading import Thread, Event
-from pynput import keyboard
+try:
+    from pynput import keyboard
+except ImportError:
+    keyboard = None
 from core.config import settings
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -236,6 +239,10 @@ class WindowManager:
         self.native_window = None
         self.is_windows = platform.system() == "Windows"
         self.is_macos = platform.system() == "Darwin"
+        self.is_linux = platform.system() == 'Linux'
+        self.qt_dispatcher = None
+        self.shortcut_bindings = {}
+        self.global_hotkeys_active = False
         self.current_transparency = 1.0
         self.is_ghost_mode = False
         self.screen_share_monitor_active = False
@@ -257,6 +264,32 @@ class WindowManager:
     def set_native_window(self, native_win):
         """Set the macOS native NSWindow object."""
         self.native_window = native_win
+        if self.is_linux:
+            from services.desktop import create_qt_dispatcher
+            self.qt_dispatcher = create_qt_dispatcher(native_win)
+
+    def _linux_call(self, callback):
+        if not self.qt_dispatcher or not self.native_window:
+            return False
+        try:
+            return self.qt_dispatcher.invoke(callback)
+        except Exception as error:
+            print(f'Linux window control failed: {error}')
+            return False
+
+    def _linux_flag(self, flag, enabled):
+        if flag in ('Tool', 'WindowTransparentForInput') and enabled and not self.global_hotkeys_active:
+            return False
+        def update():
+            from qtpy.QtCore import Qt
+            window = self.native_window
+            visible = window.isVisible()
+            window.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            window.setWindowFlag(getattr(Qt.WindowType, flag), enabled)
+            if visible:
+                window.show()
+            return True
+        return self._linux_call(update)
 
     def _check_macos_accessibility_permission(self) -> bool:
         """Check and request macOS Accessibility permission for global hotkeys."""
@@ -397,6 +430,15 @@ class WindowManager:
         Returns:
             bool: True if successful, False otherwise
         """
+        if self.is_linux:
+            transparency = max(0.0, min(1.0, transparency))
+            result = self._linux_call(lambda: self.native_window.setWindowOpacity(transparency) or True)
+            if result:
+                self.current_transparency = transparency
+            return result
+        if self.is_macos and threading.current_thread() is not threading.main_thread():
+            from services.desktop import call_on_macos_ui
+            return call_on_macos_ui(lambda: self.set_transparency(transparency))
         if not (self.is_windows or self.is_macos):
             print("Transparency not supported on this platform")
             return False
@@ -472,6 +514,8 @@ class WindowManager:
     
     def find_window_by_title(self, title: str) -> Optional[int]:
         """Find window handle by title"""
+        if self.is_linux:
+            return id(self.native_window) if self.native_window else None
         if self.is_macos:
             try:
                 from AppKit import NSApplication
@@ -659,6 +703,11 @@ class WindowManager:
         Returns:
             bool: True if successful, False otherwise
         """
+        if self.is_linux:
+            return self._linux_flag('WindowStaysOnTopHint', on_top)
+        if self.is_macos and threading.current_thread() is not threading.main_thread():
+            from services.desktop import call_on_macos_ui
+            return call_on_macos_ui(lambda: self.set_always_on_top(on_top))
         if self.is_macos:
             if not self.native_window:
                 print("Always on top requires native window on macOS")
@@ -752,7 +801,7 @@ class WindowManager:
             "transparency": self.current_transparency,
             "transparency_percent": int(self.current_transparency * 100),
             "is_transparent": self.current_transparency < 1.0,
-            "platform_supported": self.is_windows or self.is_macos,
+            "platform_supported": self.is_windows or self.is_macos or self.is_linux,
             "window_handle": self.hwnd or (id(self.native_window) if self.native_window else None),
             "screen_share_monitor_active": self.screen_share_monitor_active,
             "hidden_screen_share_windows": len(self.hidden_screen_share_windows)
@@ -760,6 +809,16 @@ class WindowManager:
 
     def set_ghost_mode(self, enabled: bool):
         """Enable or disable 'click-through' (ghost) mode."""
+        if self.is_macos and enabled and not self.global_hotkeys_active:
+            print('Click-through requires global hotkey permission so the window can be restored.')
+            return
+        if self.is_linux:
+            if self._linux_flag('WindowTransparentForInput', enabled):
+                self.is_ghost_mode = enabled
+            return
+        if self.is_macos and threading.current_thread() is not threading.main_thread():
+            from services.desktop import call_on_macos_ui
+            return call_on_macos_ui(lambda: self.set_ghost_mode(enabled))
         if self.is_macos:
             if not self.native_window:
                 return
@@ -813,7 +872,7 @@ class WindowManager:
         
         Use Ctrl+Shift+Win shortcuts on Windows or Option shortcuts on macOS.
         """
-        if not (self.is_windows or self.is_macos):
+        if not (self.is_windows or self.is_macos or self.is_linux):
             print("❌ Proctoring stealth mode requires Windows or macOS")
             return False
         if self.is_windows and not self.hwnd:
@@ -863,6 +922,15 @@ class WindowManager:
         Returns:
             bool: True if successful, False otherwise
         """
+        if self.is_linux:
+            def move():
+                position = self.native_window.pos()
+                self.native_window.move(position.x() + dx, position.y() + dy)
+                return True
+            return self._linux_call(move)
+        if self.is_macos and threading.current_thread() is not threading.main_thread():
+            from services.desktop import call_on_macos_ui
+            return call_on_macos_ui(lambda: self.move_window(dx, dy))
         if self.is_macos:
             if not self.native_window:
                 print("❌ [macOS] Window movement requires valid native window")
@@ -928,11 +996,28 @@ class WindowManager:
 
     def toggle_visibility(self):
         """Toggle the window's visibility without changing focus (stealth mode)."""
+        if self.is_linux:
+            def toggle():
+                from qtpy.QtCore import Qt
+                window = self.native_window
+                window.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+                if not self.global_hotkeys_active:
+                    window.showMinimized()
+                    return True
+                window.hide() if window.isVisible() else window.show()
+                return True
+            return self._linux_call(toggle)
+        if self.is_macos and threading.current_thread() is not threading.main_thread():
+            from services.desktop import call_on_macos_ui
+            return call_on_macos_ui(self.toggle_visibility)
         if self.is_macos:
             if not self.native_window:
                 print("Window visibility control: no native window on macOS.")
                 return
             try:
+                if not self.global_hotkeys_active:
+                    self.native_window.miniaturize_(None)
+                    return
                 if self.native_window.isVisible():
                     self.native_window.orderOut_(None)
                     print("🕵️‍ [macOS] Window hidden via global hotkey.")
@@ -962,7 +1047,14 @@ class WindowManager:
 
     def hide_from_taskbar(self) -> bool:
         """Hide the window from the taskbar / macOS Dock."""
+        if self.is_linux:
+            return self._linux_flag('Tool', True)
+        if self.is_macos and threading.current_thread() is not threading.main_thread():
+            from services.desktop import call_on_macos_ui
+            return call_on_macos_ui(self.hide_from_taskbar)
         if self.is_macos:
+            if not self.global_hotkeys_active:
+                return False
             try:
                 from AppKit import NSApp, NSApplicationActivationPolicyAccessory
                 NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
@@ -991,8 +1083,6 @@ class WindowManager:
     def _start_hotkey_listener_thread(self):
         """The actual listener thread for global hotkeys."""
         print("🎧 Starting global hotkey listener thread...")
-        if self.is_macos:
-            self._check_macos_accessibility_permission()
 
         def on_hide_show():
             self.toggle_visibility()
@@ -1114,37 +1204,7 @@ class WindowManager:
                 print("🔽 Starting continuous scroll down")
             return False
 
-        # Create a separate listener for key releases to stop scrolling
-        def start_release_listener():
-            """Background thread to handle key releases for stopping continuous scroll"""
-            def on_key_release(key):
-                try:
-                    char = getattr(key, 'char', None)
-                    is_alt = key in (keyboard.Key.alt, keyboard.Key.alt_l, keyboard.Key.alt_r)
-                    
-                    if (char in (',', '<') or key == keyboard.Key.up or is_alt) and self.scrolling_up:
-                        self.scrolling_up = False
-                        print("🛑 Stopped continuous scroll up")
-                    if (char in ('.', '>') or key == keyboard.Key.down or is_alt) and self.scrolling_down:
-                        self.scrolling_down = False
-                        print("🛑 Stopped continuous scroll down")
-                except:
-                    pass
-
-            def on_key_press(key):
-                # We don't need to handle press here since GlobalHotKeys handles it
-                pass
-
-            self.release_listener = keyboard.Listener(
-                on_press=on_key_press,
-                on_release=on_key_release,
-                suppress=False
-            )
-            self.release_listener.start()
-            self.release_listener.join()
-
-        if self.is_windows:
-            self._run_windows_hotkeys({
+        self.shortcut_bindings = {
                 ord('H'): on_hide_show, ord('K'): on_toggle_ghost,
                 ord('V'): on_toggle_vision_mode, ord('S'): on_capture_screenshot,
                 ord('P'): on_process_screenshots, ord('R'): on_reset_screenshot_queue,
@@ -1160,51 +1220,86 @@ class WindowManager:
                 ord('G'): lambda: self.send_audio_command('toggle_answer_mode'),
                 0xDB: lambda: self.send_audio_command('decrease_transparency'),
                 0xDD: lambda: self.send_audio_command('increase_transparency'),
-            })
+            }
+        if self.is_windows:
+            self._run_windows_hotkeys(self.shortcut_bindings)
+            return
+        if self.is_linux or self.is_macos:
+            self._run_unix_hotkeys(self.shortcut_bindings)
             return
 
-        # macOS keeps its existing Option shortcuts.
-        release_thread = Thread(target=start_release_listener, daemon=True)
-        release_thread.start()
+    def _run_unix_hotkeys(self, bindings):
+        if keyboard is None or (self.is_linux and os.environ.get('XDG_SESSION_TYPE') == 'wayland'):
+            print('Global shortcuts require X11; focused-window shortcuts remain available.')
+            return
+        if self.is_macos and not self._check_macos_accessibility_permission():
+            return
+        pressed = set()
+        fired = set()
+        modifiers = {keyboard.Key.alt} if self.is_macos else {keyboard.Key.ctrl, keyboard.Key.shift, keyboard.Key.cmd}
+        modifier_keys = {keyboard.Key.ctrl, keyboard.Key.shift, keyboard.Key.cmd, keyboard.Key.alt, keyboard.Key.alt_gr}
+        special = {keyboard.Key.left: 0x25, keyboard.Key.up: 0x26, keyboard.Key.right: 0x27,
+                   keyboard.Key.down: 0x28, keyboard.Key.page_up: 0x21, keyboard.Key.page_down: 0x22,
+                   keyboard.Key.f1: 0x70, keyboard.Key.f2: 0x71, keyboard.Key.f3: 0x72}
+        special_codes = {key.value.vk: code for key, code in special.items()}
 
-        # Regular hotkeys using the proven GlobalHotKeys approach
-        hotkey_map = {
-            '<alt>+x': on_toggle_ghost,
-            '<alt>+h': on_hide_show,           # Toggle visibility (Safe replacement for Alt+Z)
-            '<alt>+z': on_hide_show,           # Secondary visibility fallback
-            '<alt>+v': on_toggle_vision_mode,  # Toggle vision mode
-            '<alt>+s': on_capture_screenshot,  # Capture screenshot
-            '<alt>+p': on_process_screenshots, # Process screenshots
-            '<alt>+r': on_reset_screenshot_queue, # Reset screenshot queue
-            '<alt>+q': on_switch_primary,      # Switch to primary preset
-            '<alt>+w': on_switch_secondary,    # Switch to secondary preset
-            '<alt>+e': on_auto_select,         # Auto-select best AI preset
-            '<alt>+t': on_switch_vision_model, # Switch vision model
-            '<alt>+m': on_toggle_mic_mute,     # Toggle microphone mute
-            '<alt>+u': on_toggle_universal_mute, # Toggle universal mute (pause)
-            '<alt>+1': on_transparency_transparent,  # 40% opacity (transparent)
-            '<alt>+2': on_transparency_semi,         # 70% opacity (semi-transparent)
-            '<alt>+3': on_transparency_opaque,       # 100% opacity (opaque)
-            '<alt>+<shift>+s': on_enable_proctoring_stealth,  # Enable proctoring stealth mode
-            '<alt>+<shift>+,': on_move_left,   # Move window left (Alt+Shift+,)
-            '<alt>+<shift>+.': on_move_right,  # Move window right (Alt+Shift+.)
-            '<alt>+<shift>+u': on_move_up,     # Move window up (Alt+Shift+U)
-            '<alt>+<shift>+d': on_move_down,   # Move window down (Alt+Shift+D)
-            '<alt>+o': on_reset_interview,     # Reset interview session
-            '<alt>+,': on_scroll_up_start,     # Start continuous scroll up (Alt+,)
-            '<alt>+.': on_scroll_down_start,   # Start continuous scroll down (Alt+.)
-            # Fallback legacy shortcuts
-            '<alt>+<up>': on_scroll_up_start,
-            '<alt>+<down>': on_scroll_down_start,
-            '<alt>+<left>': on_move_left,
-            '<alt>+<right>': on_move_right,
-            '<alt>+i': on_move_up,
-            '<alt>+j': on_move_down,
-        }
-        
-        self.hotkey_listener = keyboard.GlobalHotKeys(hotkey_map)
-        self.hotkey_listener.start()
-        self.hotkey_listener.join()
+        def key_code(key):
+            if self.is_macos:
+                # Physical key codes survive Option's accented/symbol character translation.
+                codes = {4: ord('H'), 6: ord('H'), 7: ord('K'), 12: ord('Q'), 13: ord('W'),
+                         14: ord('E'), 17: ord('T'), 46: ord('M'), 32: ord('U'), 31: ord('O'),
+                         5: ord('G'), 9: ord('V'), 1: ord('S'), 35: ord('P'), 15: ord('R'),
+                         18: 0x70, 19: 0x71, 20: 0x72, 33: 0xDB, 30: 0xDD,
+                         43: 0x21, 47: 0x22, 126: 0x21, 125: 0x22, 123: 0x25, 124: 0x27,
+                         34: 0x26, 38: 0x28}
+                if keyboard.Key.shift in pressed:
+                    codes = {1: ord('Y'), 43: 0x25, 47: 0x27, 32: 0x26, 2: 0x28}
+                return codes.get(getattr(key, 'vk', getattr(getattr(key, 'value', None), 'vk', None)))
+            char = getattr(key, 'char', '') or ''
+            if char in ('[', '{'):
+                return 0xDB
+            if char in (']', '}'):
+                return 0xDD
+            if len(char) == 1:
+                return ord(char) + 64 if 0 < ord(char) < 27 else ord(char.upper())
+            return special.get(key, special_codes.get(getattr(key, 'vk', None)))
+
+        def on_press(key):
+            if not self.is_macos or getattr(key, 'vk', None) is None:
+                key = self.hotkey_listener.canonical(key)
+            pressed.add(key)
+            code = key_code(key)
+            required = modifiers | ({keyboard.Key.shift} if self.is_macos and keyboard.Key.shift in pressed else set())
+            if pressed & modifier_keys == required and code in bindings and code not in fired:
+                fired.add(code)
+                bindings[code]()
+
+        def on_release(key):
+            if not self.is_macos or getattr(key, 'vk', None) is None:
+                key = self.hotkey_listener.canonical(key)
+            pressed.discard(key)
+            fired.discard(key_code(key))
+            if key in modifier_keys or key_code(key) == 0x21:
+                self.scrolling_up = False
+            if key in modifier_keys or key_code(key) == 0x22:
+                self.scrolling_down = False
+            if key in modifier_keys:
+                fired.clear()
+
+        try:
+            self.hotkey_listener = keyboard.Listener(on_press=on_press, on_release=on_release, suppress=False)
+            self.hotkey_listener.start()
+            self.global_hotkeys_active = True
+            self.hide_from_taskbar()
+            if webview.windows:
+                webview.windows[0].evaluate_js('window.__nativeHotkeys = true;')
+            self.hotkey_listener.join()
+        except Exception as error:
+            print(f'Global shortcuts unavailable: {error}')
+        finally:
+            self.global_hotkeys_active = False
+            if webview.windows:
+                webview.windows[0].evaluate_js('window.__nativeHotkeys = false;')
 
     def _run_windows_hotkeys(self, bindings):
         """Register exact chords; occupied shortcuts stay with their current owner."""
@@ -1397,6 +1492,7 @@ class WindowManager:
 
     def stop_hotkey_listener(self):
         """Cleanly stops the global hotkey listeners on application exit."""
+        self.global_hotkeys_active = False
         self._hotkey_stop.set()
         if getattr(self, 'hotkey_listener', None):
             try:
@@ -1416,7 +1512,7 @@ class WindowManager:
 
     def start_hotkey_listener(self):
         """Starts the global hotkey listener in a separate thread."""
-        if not (self.is_windows or self.is_macos):
+        if not (self.is_windows or self.is_macos or self.is_linux):
             print("Global hotkeys not supported on this platform.")
             return
 

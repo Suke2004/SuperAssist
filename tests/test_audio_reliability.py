@@ -184,6 +184,7 @@ async def test_native_output_starts_without_a_microphone_transcription_connectio
     capture = MagicMock(open=AsyncMock(), sample_rate=48000)
     monkeypatch.setattr('api.session_manager.DeepgramManager', factory)
     monkeypatch.setattr('services.native_audio.NativeLoopback', MagicMock(return_value=capture))
+    monkeypatch.setattr('services.portable_audio.PortableCapture', MagicMock(return_value=capture))
     monkeypatch.setattr('api.session_manager.MultiLLMManager', MagicMock())
     monkeypatch.setattr('api.session_manager.vision_service.set_context_manager', MagicMock())
     monkeypatch.setattr('api.session_manager.vision_service.load_vision_providers', MagicMock())

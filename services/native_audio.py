@@ -11,6 +11,9 @@ except ImportError:
 
 
 def list_audio_outputs():
+    if sys.platform in ('darwin', 'linux'):
+        from services.portable_audio import list_devices
+        return list_devices()
     if sys.platform != "win32" or pa is None:
         return {"available": False, "devices": []}
     try:

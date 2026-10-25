@@ -48,6 +48,7 @@ import aiofiles
 import orjson
 import uvicorn
 import webview
+from services.desktop import DesktopAPI
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -560,6 +561,7 @@ APP_WINDOW_TITLE = os.getenv("WINDOW_TITLE", _default_title)
 
 def setup_webview_window():
     """Setup and configure the webview window"""
+    desktop_api = DesktopAPI()
     # Create the pywebview window, loading the FastAPI server
     window = webview.create_window(
         APP_WINDOW_TITLE,
@@ -568,12 +570,29 @@ def setup_webview_window():
         height=750,
         background_color='#101318',
         resizable=True,
+        js_api=desktop_api,
         on_top=True
     )
+    desktop_api._window = window
+    desktop_api._origin = ('http', '127.0.0.1', uvicorn_server.port)
 
+    shown_setup_lock = threading.Lock()
+    shown_setup_done = False
     # Window shown event handler
     def on_window_shown():
+        nonlocal shown_setup_done
+        if sys.platform in ('darwin', 'linux'):
+            with shown_setup_lock:
+                if shown_setup_done:
+                    return
+                shown_setup_done = True
         print(f"🔧 Window shown event fired. DEV_MODE = {DEV_MODE}")
+        if sys.platform == 'linux':
+            window_manager.window_manager.set_native_window(window.native)
+        elif sys.platform == 'darwin':
+            native_window = window_manager._get_macos_nswindow(window)
+            if native_window is not None:
+                window_manager.window_manager.set_native_window(native_window)
         
         if not DEV_MODE:
             print("🛡️ DEV_MODE is False - Applying screen capture protection...")
@@ -581,8 +600,7 @@ def setup_webview_window():
             if protection_success:
                 print("✅ Screen capture protection successfully applied!")
             else:
-                print("❌ CRITICAL: Screen capture protection FAILED!")
-                print("   🚨 WARNING: Window will be visible in screen recordings!")
+                print("ℹ️ Capture exclusion is unavailable on this desktop; the overlay can appear in screen sharing.")
         else:
             print("ℹ️ DEV_MODE is True. Skipping screen capture protection.")
             print("   📋 Note: Window WILL be visible in screen recordings during development")
@@ -660,7 +678,7 @@ def main():
         
         # Start the pywebview event loop (blocks until window closes)
         print("🖥️ Starting pywebview on main thread...")
-        webview.start(debug=DEV_MODE, gui='edgechromium' if sys.platform == 'win32' else None)
+        webview.start(debug=DEV_MODE, gui='edgechromium' if sys.platform == 'win32' else 'qt' if sys.platform == 'linux' else None)
         
     except KeyboardInterrupt:
         print("🛑 Application interrupted by user")

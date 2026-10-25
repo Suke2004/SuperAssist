@@ -248,7 +248,7 @@ export class WebSocketHandler {
                 break;
             case 'audio_capture_status':
             case 'stt_status':
-                this.updateAudioHealth(data.type === 'audio_capture_status' ? 'Meeting capture' : `Transcription (${data.payload.source || 'audio'})`, data.payload);
+                this.updateAudioHealth(data.type === 'audio_capture_status' ? (data.payload.source === 'microphone' ? 'Microphone capture' : 'Meeting capture') : `Transcription (${data.payload.source || 'audio'})`, data.payload);
                 break;
             case 'api_key_status':
                 this.handleApiKeyStatus(data.payload);
@@ -507,6 +507,7 @@ export class WebSocketHandler {
             audioCaptureMode: document.getElementById('audio-capture-mode')?.value || 'browser',
             audioOutput: document.getElementById('audio-output-select')?.value || '',
             microphoneAvailable,
+            audioInput: document.getElementById('mic-select')?.value || '',
             sttLanguage: state.sttLanguage || 'en', // P1: transcription language
             aiProvider: {
                 provider: state.selectedProvider.name,

@@ -1,102 +1,42 @@
 #!/usr/bin/env bash
-# ====================================================
-# SuperAssist Application Launcher (macOS / Linux)
-# ====================================================
-# 1. Check Python installation (3.8+)
-# 2. Setup virtual environment (venv)
-# 3. Install dependencies from requirements.txt
-# 4. Check macOS permissions (Accessibility & Screen Recording)
-# 5. Launch SuperAssist
-# ====================================================
+# Native macOS/Linux launcher; Windows continues to use run.bat.
+set -euo pipefail
+APP_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$APP_DIR"
+export PYTHONUTF8=1 PYTHONUNBUFFERED=1
 
-set -e
+if [[ "${1:-}" == --silent ]]; then
+    mkdir -p output
+    nohup bash "$APP_DIR/run.sh" --background >output/desktop-launch.log 2>&1 </dev/null &
+    echo "VeyraCue starting (PID $!). Log: $APP_DIR/output/desktop-launch.log"
+    exit 0
+fi
 
-echo ""
-echo "===================================================="
-echo "       SUPERASSIST APPLICATION LAUNCHER (macOS)     "
-echo "===================================================="
-echo ""
-
-# [1/5] Checking Python installation
-echo "[1/5] Checking Python installation..."
-PYTHON_BIN=""
-if command -v python3 &>/dev/null; then
-    PYTHON_BIN="python3"
-elif command -v python &>/dev/null; then
-    PYTHON_BIN="python"
-else
-    echo "❌ ERROR: Python is not installed or not found in PATH!"
-    echo "   Please install Python 3.8+ using Homebrew ('brew install python') or from https://python.org"
+APP_PYTHON="$(command -v python3 || command -v python || true)"
+if [[ -z "$APP_PYTHON" ]]; then
+    echo 'Install Python 3.10+ and its venv module, then run this launcher again.' >&2
     exit 1
 fi
+"$APP_PYTHON" -c 'import sys; assert sys.version_info >= (3,10), "Python 3.10+ required"'
 
-PYTHON_VERSION=$($PYTHON_BIN -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')")
-echo "   Found Python $PYTHON_VERSION ($PYTHON_BIN)"
-
-# [2/5] Checking virtual environment
-echo "[2/5] Checking virtual environment..."
-if [ ! -d "venv" ]; then
-    echo "   Creating virtual environment..."
-    $PYTHON_BIN -m venv venv
-    echo "   Virtual environment created successfully."
+# Never overwrite the working Windows virtual environment in a shared checkout.
+if [[ -x .venv/bin/python ]]; then
+    APP_PYTHON="$APP_DIR/.venv/bin/python"
+elif [[ -x venv/bin/python ]]; then
+    APP_PYTHON="$APP_DIR/venv/bin/python"
 else
-    echo "   Virtual environment found."
+    "$APP_PYTHON" -m venv .venv
+    APP_PYTHON="$APP_DIR/.venv/bin/python"
 fi
 
-# [3/5] Activating virtual environment
-echo "[3/5] Activating virtual environment..."
-source venv/bin/activate
-echo "   Virtual environment activated ($(python --version))"
-
-# [4/5] Checking dependencies
-echo "[4/5] Checking dependencies..."
-FAST_BOOT=true
-if [ "$1" == "--update" ] || [ "$1" == "--install" ] || [ ! -d "venv/lib" ]; then
-    FAST_BOOT=false
+if [[ "${1:-}" == --update || "${1:-}" == --install ]] ||
+   ! "$APP_PYTHON" -c 'import aiofiles, fastapi, webview, importlib.util, sys; assert importlib.util.find_spec("soundcard"); exec("import qtpy.QtWebEngineWidgets, mss" if sys.platform == "linux" else "import AppKit, Quartz")' >/dev/null 2>&1; then
+    "$APP_PYTHON" -m pip install -r requirements.txt --timeout 60
 fi
 
-# Check if fastapi is installed in the venv
-if ! python -c "import fastapi" &>/dev/null; then
-    FAST_BOOT=false
+if [[ "$(uname -s)" == Linux && -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    echo 'A graphical Linux desktop is required. Start this from your desktop session.' >&2
+    exit 1
 fi
-
-if [ "$FAST_BOOT" = true ]; then
-    echo "   ⚡ Fast boot: Core dependencies verified. Skipping pip check."
-    echo "   (Run './run.sh --update' to reinstall or update dependencies)"
-else
-    echo "   Upgrading pip..."
-    python -m pip install --upgrade pip --quiet --timeout 60 || echo "   ⚠️ pip upgrade skipped"
-    echo "   Installing requirements from requirements.txt..."
-    pip install -r requirements.txt --timeout 60
-    echo "   Dependencies installed successfully."
-fi
-
-# Ensure .env exists
-if [ ! -f ".env" ]; then
-    if [ -f ".env.example" ]; then
-        cp .env.example .env
-        echo "📄 Created .env from .env.example — please configure your API keys!"
-    else
-        echo "⚠️ WARNING: .env not found. Application may require environment variables."
-    fi
-fi
-
-# macOS Permissions notice
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    echo ""
-    echo "🍎 macOS Permissions Check:"
-    echo "   - Accessibility: Required for global hotkeys (Option+H, Option+X, Option+1/2/3)"
-    echo "     Grant to Terminal / iTerm in: System Settings > Privacy & Security > Accessibility"
-    echo "   - Screen Recording: Required if screen capture / vision analysis is used"
-    echo "     Grant in: System Settings > Privacy & Security > Screen Recording"
-fi
-
-# [5/5] Launch SuperAssist
-echo ""
-echo "[5/5] Starting SuperAssist application..."
-echo "===================================================="
-echo "          APPLICATION STARTING... (Ctrl+C to stop)   "
-echo "===================================================="
-echo ""
-
-exec python main.py "$@"
+echo 'Starting VeyraCue. Setup instructions: CROSS_PLATFORM.md'
+exec "$APP_PYTHON" main.py

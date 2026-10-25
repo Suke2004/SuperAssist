@@ -25,6 +25,7 @@ def test_desktop_window_starts_on_top(monkeypatch):
 def test_interview_can_remain_interactive_and_click_through_is_explicit():
     manager = main.window_manager.WindowManager()
     manager.hwnd = 1
+    manager.native_window = MagicMock()
     manager.set_ghost_mode = MagicMock()
     manager.hide_from_taskbar = MagicMock()
     manager.set_always_on_top = MagicMock()
@@ -63,7 +64,7 @@ def test_desktop_start_selects_webview2_and_reports_fatal_errors(monkeypatch, fa
             main.main()
     else:
         main.main()
-    assert start.call_args.kwargs['gui'] == ('edgechromium' if sys.platform == 'win32' else None)
+    assert start.call_args.kwargs['gui'] == ('edgechromium' if sys.platform == 'win32' else 'qt' if sys.platform == 'linux' else None)
     services.stop.assert_called_once()
 
 

@@ -375,6 +375,43 @@ class ScreenshotService {
         this.isCapturing = true;
         
         try {
+            if (window.pywebview?.api && /Mac|Linux/.test(navigator.platform)) {
+                const result = await window.pywebview.api.capture_screenshot();
+                if (result.error) throw new Error(result.error);
+                let blob;
+                if (result.upload_required) {
+                    blob = await new Promise(resolve => {
+                        const input = document.createElement('input');
+                        input.type = 'file';
+                        input.accept = 'image/png,image/jpeg,image/webp';
+                        input.onchange = () => resolve(input.files[0]);
+                        input.oncancel = () => resolve(null);
+                        input.click();
+                    });
+                    if (!blob) return false;
+                    if (!blob.type.startsWith('image/') || blob.size > 12 * 1024 * 1024) throw new Error('Choose an image smaller than 12MB.');
+                } else {
+                    blob = await (await fetch(result.data_url)).blob();
+                }
+                const image = new Image();
+                const url = URL.createObjectURL(blob);
+                try {
+                    await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = url; });
+                    const scale = Math.min(1, MAX_CAPTURE_EDGE_PX / Math.max(image.width, image.height));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.round(image.width * scale);
+                    canvas.height = Math.round(image.height * scale);
+                    canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+                    const encoded = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+                    if (!encoded) throw new Error('Screenshot encoding failed.');
+                    this.addToQueue({ id: Date.now(), blob: encoded, dataUrl: canvas.toDataURL('image/jpeg', 0.8),
+                        timestamp: new Date(), size: encoded.size });
+                } finally {
+                    URL.revokeObjectURL(url);
+                }
+                this.showNotification('Screenshot captured', `Added to queue (${this.screenshotQueue.length}/${this.maxScreenshots})`, 'success');
+                return true;
+            }
             // Try to use existing screen video track first
             let videoTrack = null;
             
@@ -798,4 +835,4 @@ const screenshotService = new ScreenshotService();
 // Make it globally accessible
 window.screenshotService = screenshotService;
 
-export default screenshotService; 
+export default screenshotService;

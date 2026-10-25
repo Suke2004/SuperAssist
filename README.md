@@ -1,10 +1,12 @@
 # VeyraCue desktop interview assistant
 
-VeyraCue is a local desktop interview workspace with live transcription, suggested answers, screenshots, and typed follow-ups. Its dark interface runs inside Windows WebView2. The live answer pane uses 14px body text (13px in narrow windows) with compact headings and an independently scrollable answer history.
+VeyraCue is a local desktop interview workspace with live transcription, suggested answers, screenshots, and typed follow-ups. Its dark interface runs inside Windows WebView2, macOS Cocoa/WebKit, or Linux Qt WebEngine. The live answer pane uses 14px body text (13px in narrow windows) with compact headings and an independently scrollable answer history.
 
 ## Launch and setup
 
 Double-click `silent_run.vbs` to launch the desktop window with a hidden terminal. Use `run.bat` for diagnostic output. The launcher uses the existing virtual environment and provider configuration. Startup errors are recorded in `output/desktop-launch.log`.
+
+On macOS/Linux, use `bash run.sh` or `bash run.sh --silent` for background startup. MacBooks capture meeting playback through BlackHole with a Multi-Output Device; Linux uses PulseAudio/PipeWire monitors. Read [MacBook and Linux setup](CROSS_PLATFORM.md) for required audio routing, permissions, libraries, and Wayland behavior. Windows launchers, audio capture, and shortcuts keep their existing path.
 
 API keys remain in `.env` and `ai_providers.json`. Only providers with usable configured keys appear in the setup. Existing Deepgram and answer/vision engines are reused; no Parakeet account or subscription is required.
 
@@ -66,7 +68,7 @@ Inside the focused live window, outside input fields:
 
 In developer mode, Ctrl+J fills the onboarding form with sample data. It is not a global interview shortcut.
 
-macOS keeps its previous Option shortcuts: H show/hide, X click-through, M microphone, U pause, Q/W/E answer models, G answer mode, V/S/P/R/T vision, O reset, 1/2/3 opacity, and brackets to adjust opacity. Option+Shift+S enables stealth; Option+Shift+comma/period/U/D moves the window; Option+comma/period scrolls. This update's native hotkey checks cover Windows.
+Linux uses the same table with Ctrl+Shift+Super. Global controls require X11; Wayland uses focused-window shortcuts and screenshot uploads. macOS keeps its Option shortcuts, including X for click-through and 1/2/3 for opacity. See the complete [platform shortcut table](CROSS_PLATFORM.md#shortcuts).
 
 ## Reliability and limits
 
@@ -79,6 +81,7 @@ Capture is tied to the chosen playback device. It includes other sound on that d
 ## Documentation and validation
 
 - [Audio capture methods and recovery](AUDIO_PLAN.md)
+- [MacBook and Linux setup and shortcuts](CROSS_PLATFORM.md)
 - [Desktop window and click-through controls](PROCTORING_STEALTH_GUIDE.md)
 - Run backend checks with `venv\Scripts\python.exe -m pytest -q`.
 - Browser checks live in `tests/parakeet_workspace_check.js`, `tests/audio_workspace_check.js`, `tests/meeting_hotkeys_check.js`, and `tests/answer_audio_check.js`; they target the local validation server on port 8017.

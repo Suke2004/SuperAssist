@@ -131,3 +131,5 @@ Open a GitHub issue or start a Discussion — we're happy to help!
 ## Current desktop validation
 
 Use `venv\Scripts\python.exe -m pytest -q` for backend checks. Browser regression scripts in `tests/` cover dark layout, answer scrolling, microphone-optional native startup, audio transport, and current Windows hotkeys. Keep `.env`, `ai_providers.json`, transcript exports, and runtime `output/` artifacts out of commits. The current user workflow and complete shortcut list are in [README.md](README.md).
+
+On macOS/Linux, install `requirements-dev.txt` into the Unix virtual environment and run `python -m pytest`. `tests/test_cross_platform.py` covers platform routing and source isolation; `tests/cross_platform_check.js` checks the native bridge flows in the browser. `tests/linux_runtime_check.py` exercises a real Qt/X11 desktop and a PulseAudio test sink named `veyracue_test`. Record virtual-desktop results separately from physical hardware/meeting validation. See [CROSS_PLATFORM.md](CROSS_PLATFORM.md) for the supported desktop/audio configurations.

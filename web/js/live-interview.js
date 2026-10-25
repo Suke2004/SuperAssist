@@ -4,6 +4,7 @@ import { LiveStreaming } from './live-streaming.js';
 import { LiveControls } from './live-controls.js';
 import muteManager from './mute-manager.js';
 import { StreamingMarkdownParser } from './streaming-markdown-parser.js';
+import { shortcutText } from './platform.js';
 
 class LiveInterviewUI {
     constructor() {
@@ -1415,11 +1416,11 @@ class LiveInterviewUI {
             if (isMuted) {
                 this.muteButton.classList.add('muted');
                 if (textSpan) textSpan.textContent = 'Muted';
-                this.muteButton.title = 'Microphone is Muted (Click or Ctrl+Shift+Win+M to unmute)';
+                this.muteButton.title = shortcutText('Microphone is Muted (Click or Ctrl+Shift+Win+M to unmute)');
             } else {
                 this.muteButton.classList.remove('muted');
                 if (textSpan) textSpan.textContent = 'Mute';
-                this.muteButton.title = 'Microphone is Active (Click or Ctrl+Shift+Win+M to mute)';
+                this.muteButton.title = shortcutText('Microphone is Active (Click or Ctrl+Shift+Win+M to mute)');
             }
         }
     }
@@ -1431,11 +1432,11 @@ class LiveInterviewUI {
             if (isPaused) {
                 this.pauseButton.classList.add('paused');
                 if (textSpan) textSpan.textContent = 'Paused';
-                this.pauseButton.title = 'AI Listening Paused (Click or Ctrl+Shift+Win+U to resume)';
+                this.pauseButton.title = shortcutText('AI Listening Paused (Click or Ctrl+Shift+Win+U to resume)');
             } else {
                 this.pauseButton.classList.remove('paused');
                 if (textSpan) textSpan.textContent = 'Pause';
-                this.pauseButton.title = 'AI Listening Active (Click or Ctrl+Shift+Win+U to pause)';
+                this.pauseButton.title = shortcutText('AI Listening Active (Click or Ctrl+Shift+Win+U to pause)');
             }
         }
     }

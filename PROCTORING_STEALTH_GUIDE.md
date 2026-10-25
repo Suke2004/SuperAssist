@@ -1,5 +1,7 @@
 # VeyraCue desktop window controls
 
+MacBook and Linux desktop controls, permissions, shortcuts, and capture limitations are described in [CROSS_PLATFORM.md](CROSS_PLATFORM.md). On Unix platforms, click-through/taskbar hiding require working global shortcuts; otherwise the app stays recoverable through the Dock/taskbar and Show/Hide minimizes it. Linux Wayland uses focused controls and explicit screenshot uploads. Windows behavior below is unchanged.
+
 The interview window starts on top with mouse interaction enabled. This allows answer scrolling, text selection, Chat, and toolbar actions. Starting an interview does not automatically enable click-through.
 
 ## Click-through and scrolling

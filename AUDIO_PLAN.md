@@ -2,9 +2,13 @@
 
 Use Windows WASAPI loopback for the interviewer's audio and a separate browser microphone stream for the candidate. Select the exact output used by Zoom, Teams, Meet, or the meeting app, and wear headphones.
 
+macOS uses a BlackHole/CoreAudio routed meeting input and a separate native microphone; Linux uses a PulseAudio/PipeWire playback monitor and a separate native microphone. These sources reuse the existing bounded queues, retry loop, source-specific transcription, and mute/cleanup behavior. See [platform setup](CROSS_PLATFORM.md) before choosing these methods. Windows retains WASAPI and its browser microphone.
+
 | Method | Best use | Limitation |
 | --- | --- | --- |
 | Windows direct audio (default when available) | Desktop or browser meetings, including headphones | Captures all playback on the selected output; restart after switching outputs or changing its sample rate |
+| macOS routed audio | MacBook meetings through headphones | Requires BlackHole and a Multi-Output Device containing headphones and BlackHole |
+| Linux system audio | PulseAudio or PipeWire desktop meetings | Requires the playback monitor of the actual meeting output |
 | Browser tab audio | One browser meeting tab, especially when other audio must be excluded | Requires explicit tab audio sharing and a browser that supports it |
 | Browser screen audio | Fallback for a desktop meeting | Depends on sharing system audio; can include other playback |
 | Microphone alone | In-person practice | Cannot reliably hear remote voices routed to headphones |

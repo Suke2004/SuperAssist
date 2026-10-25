@@ -17,6 +17,7 @@ import hotkeyManager, { isAppShortcut } from './hotkeys.js';
 import presetManager from './preset-manager.js';
 import screenshotService from './screenshot-service.js';
 import { ConfigManager } from './config-manager.js';
+import { updatePlatformHelp } from './platform.js';
 import { testStreamingMarkdown, testSampleMarkdown } from './streaming-markdown-demo.js';
 
 // Initialize managers
@@ -48,6 +49,7 @@ const startButton = document.getElementById('start-interview-button');
 const backButton = document.getElementById('back-to-onboarding-btn');
 let sessionTimer;
 let sessionStartedAt;
+let nativeAudioInfo = {};
 
 // --- Tab Management ---
 function setupTabs() {
@@ -115,14 +117,22 @@ async function runPreFlightChecks() {
     const micSelectionCheck = document.getElementById('check-mic-selection');
 
     providerManager.webSocketHandler.updateCheckStatus(micPermissionCheck, 'pending', 'Requesting Microphone...');
-    const micPermission = await setupMicrophone();
+    const nativeMic = nativeAudioInfo.native_microphone && document.getElementById('audio-capture-mode').value === 'native';
+    let micPermission;
+    if (nativeMic) {
+        micSelect.replaceChildren(...nativeAudioInfo.microphones.map(d => new Option(d.name, d.id)));
+        micSelect.disabled = !nativeAudioInfo.microphones.length;
+        micPermission = !micSelect.disabled;
+    } else {
+        micPermission = await setupMicrophone();
+    }
     if (micPermission) {
-        providerManager.webSocketHandler.updateCheckStatus(micPermissionCheck, 'success', 'Microphone Permission OK');
+        providerManager.webSocketHandler.updateCheckStatus(micPermissionCheck, 'success', nativeMic ? 'Native microphone ready — permission checked at startup' : 'Microphone Permission OK');
         providerManager.webSocketHandler.updateCheckStatus(micSelectionCheck, 'success', 'Microphone Selection Ready');
     } else if (document.getElementById('audio-capture-mode').value === 'native') {
         micSelect.replaceChildren(new Option('Microphone unavailable — system audio only', ''));
         micSelect.disabled = true;
-        providerManager.webSocketHandler.updateCheckStatus(micPermissionCheck, 'success', 'Microphone optional — Windows system audio available');
+        providerManager.webSocketHandler.updateCheckStatus(micPermissionCheck, 'success', 'Microphone optional — system audio available');
         providerManager.webSocketHandler.updateCheckStatus(micSelectionCheck, 'success', 'System audio only');
     } else {
         providerManager.webSocketHandler.updateCheckStatus(micPermissionCheck, 'error', 'Microphone Permission Denied');
@@ -201,7 +211,8 @@ async function startInterview() {
     };
 
     const nativeCapture = document.getElementById('audio-capture-mode').value === 'native';
-    const processingStarted = nativeCapture && micSelect.disabled ? false
+    const processingStarted = nativeCapture && nativeAudioInfo.native_microphone ? !micSelect.disabled
+        : nativeCapture && micSelect.disabled ? false
         : await startAudioProcessing(micSelect.value, onAudioData, !nativeCapture);
 
     if (!processingStarted && !nativeCapture) {
@@ -214,7 +225,7 @@ async function startInterview() {
         return;
     }
     if (!processingStarted && nativeCapture) {
-        liveInterviewUI.addMessage('Microphone access is unavailable. Windows system audio will still capture the interviewer. Enable microphone access and restart if you also want your own speech transcribed.', 'system-message');
+        liveInterviewUI.addMessage('Microphone access is unavailable. Native system audio will still capture the interviewer. Enable microphone access and restart if you also want your own speech transcribed.', 'system-message');
     }
 
     try {
@@ -344,7 +355,7 @@ function setupEventListeners() {
     proceedButton?.addEventListener('click', handleOnboarding);
     startButton?.addEventListener('click', startInterview);
     backButton?.addEventListener('click', () => switchView('onboarding'));
-    document.getElementById('audio-capture-mode').addEventListener('change', updateAudioCaptureHelp);
+    document.getElementById('audio-capture-mode').addEventListener('change', runPreFlightChecks);
     window.addEventListener('superassist:session-lost', () => {
         stopAudioProcessing();
         hotkeyManager.setEnabled(false);
@@ -429,14 +440,15 @@ async function loadAudioOutputs() {
         const response = await fetch('/api/audio-outputs');
         if (!response.ok) throw new Error('Could not list audio outputs');
         const info = await response.json();
+        nativeAudioInfo = info;
         if (info.available && !mode.querySelector('[value=native]')) {
-            mode.add(new Option('Windows direct audio (recommended)', 'native'));
+            mode.add(new Option(`${info.label || 'Windows direct audio'} (recommended)`, 'native'));
             mode.value = 'native';
         }
         const selected = output.value;
-        output.replaceChildren(new Option(info.default ? `Windows default — ${info.default.replace(' [Loopback]', '')}` : 'Windows default output', ''));
-        for (const device of info.devices) output.add(new Option(device.name.replace(' [Loopback]', ''), device.name));
-        if (info.devices.some(d => d.name === selected)) output.value = selected;
+        output.replaceChildren(new Option(info.default ? `Default — ${info.default.replace(' [Loopback]', '')}` : 'Default meeting output', ''));
+        for (const device of info.devices) output.add(new Option(device.name.replace(' [Loopback]', ''), device.id || device.name));
+        if (info.devices.some(d => (d.id || d.name) === selected)) output.value = selected;
     } catch (error) {
         console.warn('Native output capture unavailable:', error);
     }
@@ -446,9 +458,11 @@ async function loadAudioOutputs() {
 function updateAudioCaptureHelp() {
     const native = document.getElementById('audio-capture-mode').value === 'native';
     document.getElementById('audio-output-select').disabled = !native;
-    document.getElementById('audio-capture-help').textContent = native
+    document.getElementById('audio-capture-help').textContent = native && nativeAudioInfo.platform === 'darwin'
+        ? 'Select BlackHole as the meeting capture device. In Audio MIDI Setup, create a Multi-Output Device with BlackHole and your headphones, then send meeting playback to that Multi-Output Device. No browser sharing prompt is needed.'
+        : native
         ? 'No screen-sharing prompt is needed. Play meeting or YouTube audio through the selected headphones/speakers. System sound is captured directly, separately from your microphone. After changing output devices, restart the session.'
-        : 'Choose your meeting browser tab and enable Share audio. For a desktop meeting, share the entire screen with system audio. Use headphones.';
+        : nativeAudioInfo.error || 'Choose your meeting browser tab and enable Share audio. For a desktop meeting, share the entire screen with system audio. Use headphones.';
     providerManager.checkAllSystemsGo();
 }
 
@@ -487,6 +501,7 @@ function setupGlobalCopyHandler() {
 
 // Main initialization
 window.addEventListener('DOMContentLoaded', async () => {
+    updatePlatformHelp();
     await loadConfig();
     applyConsoleGate(); // Suppress console.log/debug/info when DEV_MODE is off
     await providerManager.loadAiProviders();
@@ -497,6 +512,11 @@ window.addEventListener('DOMContentLoaded', async () => {
     setupTabs();
     hotkeyManager.setEnabled(false);
     switchView('onboarding');
+});
+
+window.addEventListener('pywebviewready', async () => {
+    const info = await window.pywebview.api.capabilities();
+    window.__nativeHotkeys = info.global_hotkeys;
 });
 
 // --- Developer Shortcuts ---
