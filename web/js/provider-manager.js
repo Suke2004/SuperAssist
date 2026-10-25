@@ -38,7 +38,8 @@ export class ProviderManager {
     async loadAiProviders() {
         try {
             const response = await fetch('/api/ai-providers');
-            this.aiProviders = await response.json();
+            if (!response.ok) throw new Error('Could not load configured AI providers.');
+            this.aiProviders = (await response.json()).filter(p => p.hasUsableKey !== false);
             this.stateManager.updateState({ aiProviders: this.aiProviders });
 
             this.populateProviderDropdowns();
@@ -101,7 +102,7 @@ export class ProviderManager {
     setDefaultAIProvider() {
         try {
             // Set primary provider
-            const primaryProvider = this.aiProviders.find(p => p.defaultPrimary);
+            const primaryProvider = this.aiProviders.find(p => p.defaultPrimary) || this.aiProviders.find(p => p.models?.length);
             if (primaryProvider && this.onboardingForm.providerSelect) {
                 this.onboardingForm.providerSelect.value = primaryProvider.name;
                 this.onboardingForm.providerSelect.dispatchEvent(new Event('change'));

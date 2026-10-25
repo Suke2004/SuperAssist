@@ -5,6 +5,10 @@ import { devLog } from './config.js';
 import muteManager from './mute-manager.js';
 import liveInterviewUI from './live-interview.js';
 
+export const isAppShortcut = event => /Mac/.test(navigator.platform)
+    ? event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey
+    : event.ctrlKey && event.shiftKey && event.metaKey && !event.altKey;
+
 class HotkeyManager {
     constructor() {
         this.transparencyLevels = [0.2, 0.4, 0.6, 0.8, 1.0]; // 5 levels: 20%, 40%, 60%, 80%, 100%
@@ -20,35 +24,29 @@ class HotkeyManager {
         document.addEventListener('keydown', this.handleKeyDown.bind(this));
         document.addEventListener('keyup', this.handleKeyUp.bind(this));
         
-        // Prevent default browser shortcuts that might interfere
-        document.addEventListener('keydown', (e) => {
-            // Prevent default browser actions for Alt+[, Alt+], Alt+,, Alt+., and Alt+G
-            // Note: Alt+M and Alt+U are handled by global hotkeys only
-            if (e.altKey && ['[', ']', ',', '.', 'g'].includes(e.key.toLowerCase())) {
-                e.preventDefault();
-            }
-        });
     }
 
     handleKeyDown(event) {
-        if (!this.isEnabled) return;
+        if (!this.isEnabled || !isAppShortcut(event) || event.repeat) return;
 
-        // Note: Alt+M and Alt+U are handled by global hotkeys only to prevent conflicts
+        // Note: Ctrl+Shift+Win+M and Ctrl+Shift+Win+U are handled by global hotkeys only to prevent conflicts
         
         // Check for Alt+[ to decrease transparency
-        if (event.altKey && event.key === '[') {
+        if (event.code === 'BracketLeft' || event.key === '[') {
+            event.preventDefault();
             this.decreaseTransparency();
             return;
         }
 
         // Check for Alt+] to increase transparency
-        if (event.altKey && event.key === ']') {
+        if (event.code === 'BracketRight' || event.key === ']') {
+            event.preventDefault();
             this.increaseTransparency();
             return;
         }
 
-        // P4: Alt+G toggles full answers <-> quick hints mid-interview.
-        if (event.altKey && event.key.toLowerCase() === 'g') {
+        // P4: Ctrl+Shift+Win+G toggles full answers <-> quick hints mid-interview.
+        if (event.key.toLowerCase() === 'g') {
             event.preventDefault();
             if (window.wsHandler && typeof window.wsHandler.toggleAnswerMode === 'function') {
                 const fullMode = window.wsHandler.toggleAnswerMode();
@@ -213,5 +211,7 @@ window.enableHotkeys = () => hotkeyManager.setEnabled(true);
 window.disableHotkeys = () => hotkeyManager.setEnabled(false);
 window.getTransparencyLevel = () => hotkeyManager.getCurrentTransparency();
 window.setTransparencyLevel = (level) => hotkeyManager.setTransparencyLevel(level);
+window.decreaseTransparency = () => hotkeyManager.decreaseTransparency();
+window.increaseTransparency = () => hotkeyManager.increaseTransparency();
 
-export default hotkeyManager; 
+export default hotkeyManager;

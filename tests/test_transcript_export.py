@@ -1,5 +1,6 @@
 """P3: transcript export endpoint test."""
 import pytest
+from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 
@@ -37,6 +38,10 @@ def test_export_transcript_writes_file(client, tmp_path, monkeypatch):
         {"speaker": "interviewer", "text": "what is two sum?", "timestamp": "2026-09-11T10:00:00"},
         {"speaker": "candidate", "text": "hash map approach", "timestamp": "2026-09-11T10:00:05"},
     ]
+    session.llm_manager = MagicMock()
+    session.llm_manager.shared_context.get_complete_context.return_value = {
+        "persistent": {"candidate_name": "Test Candidate", "target_role": "Engineer"}
+    }
     # Redirect the project-root export directory for test isolation.
     monkeypatch.setattr(config_api, "EXPORTS_PATH", tmp_path / "exports")
     try:
@@ -48,5 +53,6 @@ def test_export_transcript_writes_file(client, tmp_path, monkeypatch):
         content = open(data["path"], encoding="utf-8").read()
         assert "INTERVIEWER: what is two sum?" in content
         assert "CANDIDATE: hash map approach" in content
+        assert "Candidate: Test Candidate | Role: Engineer" in content
     finally:
         session_manager.remove_session(session.session_id)

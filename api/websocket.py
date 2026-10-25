@@ -74,6 +74,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: Optional[str] = Q
     try:
         while True:
             raw_msg = await websocket.receive()
+            if raw_msg.get('type') == 'websocket.disconnect':
+                raise WebSocketDisconnect(code=raw_msg.get('code', 1000))
             if "bytes" in raw_msg and raw_msg["bytes"]:
                 # P1.1: Fast-path zero-copy binary audio frame
                 await session.handle_binary_audio(raw_msg["bytes"])

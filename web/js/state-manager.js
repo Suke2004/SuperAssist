@@ -165,6 +165,7 @@ export class StateManager {
             resume: this.onboardingForm.resume?.value || '',
             focus: focus,
             objectives: this.onboardingForm.objectives?.value || '',
+            instructions: document.getElementById('user-instructions')?.value || '',
         };
 
         this.appState.selectedProvider.name = this.onboardingForm.providerSelect?.value || null;
@@ -269,7 +270,7 @@ export class StateManager {
         }
 
         if (!this.appState.visionMode.isActive) {
-            const msg = 'Vision model switching is only available in Vision Mode (Alt+V).';
+            const msg = 'Vision model switching is only available in Vision Mode (Ctrl+Shift+Win+V).';
             devWarn(msg);
             if (window.presetManager) presetManager.showErrorNotification(msg);
             return false;
@@ -331,9 +332,9 @@ export class StateManager {
         }
         
         if (!this.appState.visionMode.isActive) {
-            console.warn('⚠️ Screenshots can only be taken in vision mode - use Alt+V to enter vision mode first');
+            console.warn('⚠️ Screenshots can only be taken in vision mode - use Ctrl+Shift+Win+V to enter vision mode first');
             if (window.presetManager) {
-                presetManager.showErrorNotification('Enter vision mode first (Alt+V) before taking screenshots');
+                presetManager.showErrorNotification('Enter vision mode first (Ctrl+Shift+Win+V) before taking screenshots');
             }
             return false;
         }
@@ -354,9 +355,9 @@ export class StateManager {
         }
         
         if (!this.appState.visionMode.isActive) {
-            console.warn('⚠️ Screenshots can only be processed in vision mode - use Alt+V to enter vision mode first');
+            console.warn('⚠️ Screenshots can only be processed in vision mode - use Ctrl+Shift+Win+V to enter vision mode first');
             if (window.presetManager) {
-                presetManager.showErrorNotification('Enter vision mode first (Alt+V) before processing screenshots');
+                presetManager.showErrorNotification('Enter vision mode first (Ctrl+Shift+Win+V) before processing screenshots');
             }
             return false;
         }
@@ -377,9 +378,9 @@ export class StateManager {
         }
         
         if (!this.appState.visionMode.isActive) {
-            console.warn('⚠️ Screenshot queue can only be reset in vision mode - use Alt+V to enter vision mode first');
+            console.warn('⚠️ Screenshot queue can only be reset in vision mode - use Ctrl+Shift+Win+V to enter vision mode first');
             if (window.presetManager) {
-                presetManager.showErrorNotification('Enter vision mode first (Alt+V) before resetting screenshot queue');
+                presetManager.showErrorNotification('Enter vision mode first (Ctrl+Shift+Win+V) before resetting screenshot queue');
             }
             return false;
         }
@@ -526,4 +527,4 @@ export class StateManager {
         console.log('✅ Reset to initial state complete');
         return true;
     }
-} 
+}

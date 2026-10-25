@@ -62,7 +62,7 @@ export async function setupMicrophone() {
  * @param {function} onAudioData - Callback function to handle the processed PCM audio data.
  * @returns {Promise<boolean>} True if processing started successfully.
  */
-export async function startAudioProcessing(micId, onAudioData) {
+export async function startAudioProcessing(micId, onAudioData, captureSystem = true) {
     try {
         // 1. Get Audio Streams with noise suppression and echo cancellation
         micStream = await navigator.mediaDevices.getUserMedia({
@@ -77,9 +77,8 @@ export async function startAudioProcessing(micId, onAudioData) {
         });
 
         // 2. Obtain display stream for screen audio & screenshots
-        // On macOS WebKit or when system audio capture is unsupported/declined,
-        // fall back gracefully so the interview session never hard-fails.
-        try {
+        // Remote interviews need a real meeting audio track, not just screen video.
+        if (captureSystem) try {
             systemStream = await navigator.mediaDevices.getDisplayMedia({
                 video: true,
                 audio: {
@@ -92,13 +91,11 @@ export async function startAudioProcessing(micId, onAudioData) {
                 surfaceSwitching: "include"
             });
         } catch (displayErr) {
-            console.warn("⚠️ getDisplayMedia with audio failed or restricted, trying video-only (macOS fallback):", displayErr);
-            try {
-                systemStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-            } catch (videoErr) {
-                console.warn("⚠️ Could not get display video stream:", videoErr);
-                systemStream = null;
-            }
+            throw new Error('Meeting audio sharing was cancelled or is unavailable. Use Windows direct audio or share a supported meeting tab with audio.');
+        }
+        if (captureSystem && !systemStream?.getAudioTracks().length) {
+            window.dispatchEvent(new CustomEvent('superassist:no-system-audio'));
+            throw new Error('The selected share does not include meeting audio. Enable Share audio and try again.');
         }
 
         if (!micStream) {
@@ -117,14 +114,11 @@ export async function startAudioProcessing(micId, onAudioData) {
         try {
             audioContext = new AudioCtx({ sampleRate: TARGET_SAMPLE_RATE });
         } catch (rateErr) {
-            // The spec requires 8000-96000 to be supported, so this is close to
-            // unreachable; fall back rather than failing the whole session.
-            console.warn('⚠️ Could not pin AudioContext sample rate:', rateErr);
-            audioContext = new AudioCtx();
+            throw new Error('This browser cannot capture audio at the required 48 kHz rate. Use the desktop app.');
         }
         console.log(`🎵 AudioContext: ${audioContext.sampleRate}Hz`); // Keep this as it's important for debugging
         if (audioContext.sampleRate !== TARGET_SAMPLE_RATE) {
-            console.warn(`⚠️ AudioContext is ${audioContext.sampleRate}Hz but Deepgram expects ${TARGET_SAMPLE_RATE}Hz - transcription accuracy may suffer`);
+            throw new Error('Audio sample rate does not match transcription. Re-select your audio device.');
         }
         if (audioContext.state === 'suspended') {
             await audioContext.resume().catch(() => {});
@@ -170,6 +164,8 @@ export async function startAudioProcessing(micId, onAudioData) {
         };
         
         mixedProcessor.port.onmessage = (event) => {
+            lastChunkTimestamp = Date.now();
+            if (backupActive) return;
             // If universally muted, drop all audio data immediately.
             if (muteManager.isAudioPaused()) {
                 if (audioProcessingCounter % 200 === 0) { // Log occasionally to show it's paused
@@ -183,11 +179,7 @@ export async function startAudioProcessing(micId, onAudioData) {
             let speakerHint;
 
             if (muteManager.isMicrophoneMuted()) {
-                // When microphone is muted, candidate speech is completely silenced.
-                // Only send chunk if genuine system (interviewer) audio is detected.
-                if (systemLevel < 0.0008) {
-                    return;
-                }
+                // Preserve quiet words and silence for STT endpointing; the mic gain is already zero.
                 speakerHint = 'system';
             } else {
                 const echoVerdict = echoGuard(micLevel, systemLevel);
@@ -233,13 +225,6 @@ export async function startAudioProcessing(micId, onAudioData) {
             const systemSource = audioContext.createMediaStreamSource(systemStream);
             systemSource.connect(mixedProcessor, 0, 1);
             console.log("🔊 System audio connected successfully to channel 1");
-        } else {
-            console.warn("⚠️ No system audio track found in display stream. If capturing interviewer voice, ensure 'Share audio' is checked.");
-            window.dispatchEvent(new CustomEvent('superassist:no-system-audio'));
-            // Silent dummy source on channel 1 so mixed processor receives two inputs
-            const dummyGain = audioContext.createGain();
-            dummyGain.gain.value = 0;
-            dummyGain.connect(mixedProcessor, 0, 1);
         }
 
         // Store the video track for screenshot reuse, but remove it from the stream
@@ -410,6 +395,7 @@ function startBackupAudioEngine(micStream, systemStream, onAudioData) {
             backupContext = new AudioCtx();
         }
         console.log(`🎵 Backup AudioContext: ${backupContext.sampleRate}Hz`);
+        if (backupContext.sampleRate !== TARGET_SAMPLE_RATE) throw new Error('Backup capture rate does not match transcription');
         backupContext.resume().catch(() => {});
 
         const bufferSize = 1024;
@@ -478,7 +464,6 @@ function startBackupAudioEngine(micStream, systemStream, onAudioData) {
 
             let speakerHint = 'microphone';
             if (isMuted) {
-                if (sysRMS < 0.0008) return;
                 speakerHint = 'system';
             } else if (sysRMS > 0.0015 && sysRMS >= micRMS * 0.6) {
                 speakerHint = 'system';
@@ -495,7 +480,11 @@ function startBackupAudioEngine(micStream, systemStream, onAudioData) {
         window.dispatchEvent(new CustomEvent('superassist:backup-audio-started'));
         console.log("✅ Backup Audio Engine running and streaming PCM chunks successfully");
     } catch (err) {
+        backupActive = false;
+        if (backupProcessor) { try { backupProcessor.disconnect(); } catch (e) {} backupProcessor = null; }
+        if (backupContext) { backupContext.close().catch(() => {}); backupContext = null; }
         console.error("❌ Failed to start Backup Audio Engine:", err);
+        window.dispatchEvent(new CustomEvent('superassist:device-loss', { detail: { device: 'Backup audio capture' } }));
     }
 }
 

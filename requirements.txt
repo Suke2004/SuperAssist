@@ -2,6 +2,7 @@
 # tooling is maintained separately in requirements-dev.txt.
 pywebview>=5.0
 pywin32; sys_platform == 'win32'
+PyAudioWPatch>=0.2.12.7,<0.3; sys_platform == 'win32'
 fastapi>=0.110
 uvicorn[standard]>=0.29
 pydantic-settings>=2.2

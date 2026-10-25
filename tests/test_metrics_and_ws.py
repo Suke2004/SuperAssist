@@ -241,6 +241,7 @@ async def test_interview_start_runs_one_provider_health_preflight(monkeypatch):
         "onboardingData": {},
     })
 
+    await session._health_task
     assert llm.perform_health_checks.await_count == 1
 
 

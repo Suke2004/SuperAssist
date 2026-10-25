@@ -11,6 +11,13 @@ from pathlib import Path
 # Resolve bundled files from the repository location, not the caller's CWD.
 _PROJECT_ROOT = Path(__file__).resolve().parent
 
+if sys.platform == 'win32':
+    # Hidden/covered interview windows must keep microphone processing and timers alive.
+    _background_flags = '--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows'
+    os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = (
+        os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', '') + ' ' + _background_flags
+    ).strip()
+
 # Windows console code pages cannot encode the diagnostic emoji used by the
 # application. Reconfigure only when the stream supports it so startup logs do
 # not crash the server before FastAPI is available.
@@ -168,6 +175,12 @@ class GlobalCommandMonitor:
                 self._execute_browser_command('if (window.toggleMicMute) { window.toggleMicMute(); } else { console.warn("toggleMicMute not available"); }')
             elif command == 'toggle_universal_mute':
                 self._execute_browser_command('if (window.toggleUniversalMute) { window.toggleUniversalMute(); } else { console.warn("toggleUniversalMute not available"); }')
+            elif command == 'toggle_answer_mode':
+                self._execute_browser_command('if (window.wsHandler) { window.wsHandler.toggleAnswerMode(); }')
+            elif command == 'decrease_transparency':
+                self._execute_browser_command('if (window.decreaseTransparency) { window.decreaseTransparency(); }')
+            elif command == 'increase_transparency':
+                self._execute_browser_command('if (window.increaseTransparency) { window.increaseTransparency(); }')
             elif command == 'switch_vision_model':
                 self._execute_browser_command('if (window.switchVisionModel) { window.switchVisionModel(); } else { console.warn("switchVisionModel not available"); }')
             elif command == 'reset_interview':
@@ -232,7 +245,7 @@ class GlobalCommandMonitor:
 command_monitor = GlobalCommandMonitor()
 
 # --- FastAPI App Setup ---
-app = FastAPI()
+app = FastAPI(title="VeyraCue", version=APP_VERSION)
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
@@ -253,7 +266,9 @@ async def security_middleware(request: Request, call_next):
 
     # Allow static assets, favicon, and root index without restrictions
     if path.startswith("/static") or path == "/favicon.ico" or path == "/":
-        return await call_next(request)
+        response = await call_next(request)
+        response.headers['Cache-Control'] = 'no-store'
+        return response
 
     # 2. Origin validation for browser-initiated requests
     origin = request.headers.get("origin")
@@ -515,6 +530,15 @@ class AsyncioServiceThread:
         
         # Stop the server
         await uvicorn_server.stop()
+
+        # Stop hardware callbacks and provider connections before closing their event loop.
+        for session_id, session in list(session_manager.active_sessions.items()):
+            try:
+                await session.cleanup()
+            except Exception as error:
+                print(f'Warning: session shutdown failed: {error}')
+            finally:
+                session_manager.remove_session(session_id)
         
         # Persist metrics to disk
         try:
@@ -530,8 +554,8 @@ class AsyncioServiceThread:
 asyncio_service_thread = AsyncioServiceThread()
 
 # --- Webview Setup (Main Thread) ---
-# Configurable window title to prevent detection via task manager / Activity Monitor
-_default_title = "Activity Monitor" if sys.platform == "darwin" else "Host Process for Windows Services"
+# Preserve an explicitly configured window title.
+_default_title = "VeyraCue"
 APP_WINDOW_TITLE = os.getenv("WINDOW_TITLE", _default_title)
 
 def setup_webview_window():
@@ -542,7 +566,9 @@ def setup_webview_window():
         f'http://127.0.0.1:{uvicorn_server.port}',
         width=1000,
         height=750,
-        resizable=True
+        background_color='#101318',
+        resizable=True,
+        on_top=True
     )
 
     # Window shown event handler
@@ -614,7 +640,7 @@ def setup_webview_window():
 # --- Main Application Entry Point ---
 def main():
     """Main application entry point"""
-    print("🚀 Starting SuperAssist with corrected asyncio-native architecture...")
+    print("🚀 Starting VeyraCue desktop interview assistant...")
     print("   📋 Architecture: pywebview on main thread, asyncio services in background thread")
     
     try:
@@ -634,12 +660,13 @@ def main():
         
         # Start the pywebview event loop (blocks until window closes)
         print("🖥️ Starting pywebview on main thread...")
-        webview.start(debug=DEV_MODE)
+        webview.start(debug=DEV_MODE, gui='edgechromium' if sys.platform == 'win32' else None)
         
     except KeyboardInterrupt:
         print("🛑 Application interrupted by user")
     except Exception as e:
         print(f"❌ Application error: {e}")
+        raise
     finally:
         # Ensure cleanup
         print("🧹 Final cleanup...")

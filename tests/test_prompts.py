@@ -45,6 +45,15 @@ class TestHistorySlicing:
 
 
 class TestPromptBuilders:
+    def test_rough_english_uses_context_without_rewriting_raw_question(self):
+        ctx = _make_context(exchanges=1)
+        question = 'hash cash how remove old one when full'
+        for builder in (get_interview_answer_prompt, get_quick_response_prompt):
+            prompt = builder(question, ctx)
+            assert question in prompt and 'Question 0?' in prompt
+            assert 'imperfect English' in prompt and 'phonetic technical-term error' in prompt
+            assert 'one brief spoken clarification' in prompt
+
     def test_answer_prompt_includes_context_and_question(self):
         ctx = _make_context()
         prompt = get_interview_answer_prompt("Explain two sum", ctx)

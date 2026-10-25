@@ -1,4 +1,5 @@
 import asyncio
+import time
 from collections import deque
 from typing import Deque, Optional
 import httpx
@@ -43,7 +44,7 @@ class DeepgramManager:
     """
     Manages the connection to Deepgram for live transcription.
     """
-    def __init__(self, transcript_callback, user_languages=None, language: str = "en"):
+    def __init__(self, transcript_callback, user_languages=None, language: str = "en", sample_rate: int = 48000):
         self.transcript_callback = transcript_callback
         self.dg_connection = None
         self.is_connected = False
@@ -52,6 +53,12 @@ class DeepgramManager:
         # P1: transcription language — 'en' or 'multi' (Deepgram nova-3
         # supports multi-language code-switching via language="multi").
         self.language = language if language in ("en", "multi") else "en"
+        if sample_rate not in (8000, 16000, 22050, 24000, 32000, 44100, 48000, 96000):
+            raise ValueError('Unsupported capture sample rate.')
+        self.sample_rate = sample_rate
+        self._send_lock = asyncio.Lock()
+        self._last_gap_warning = 0.0
+        self._last_audio_at = 0.0
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 5
         self._reconnect_base_delay = 1.0  # seconds
@@ -64,9 +71,8 @@ class DeepgramManager:
         # bounded number of attempts before we give up and raise.
         self._initial_connect_max_attempts = 3
         
-        # P0.3: Circular audio ring buffer (~3.5s of audio @ ~47 chunks/s).
-        # Captures speech during transient network reconnects so words are never clipped.
-        self.audio_ring_buffer: Deque[bytes] = deque(maxlen=160)
+        # Four seconds of mono PCM, independent of the capture frame size.
+        self.audio_ring_buffer: Deque[bytes] = deque()
         
         # Setup Deepgram client
         config = DeepgramClientOptions(
@@ -76,117 +82,38 @@ class DeepgramManager:
         self.deepgram = DeepgramClient(settings.DEEPGRAM_API_KEY, config)
 
     def get_programming_keyterms(self, user_languages=None):
-        """
-        Generate programming and technical keyterms for better speech recognition.
-        Limited to 500 tokens as per Deepgram requirements.
-        Prioritizes terms based on user's selected programming languages.
-        """
-        # Core programming concepts and algorithms
-        keyterms = [
-            # LeetCode and coding platforms
-            "LeetCode", "leetcode", "LeetCode problem", "HackerRank", "CodeSignal", "Codility",
-            "coding interview", "technical interview", "whiteboard", "online judge",
-            
-            # Common algorithm problems (with variations)
-            "two sum", "2sum", "two-sum", "three sum", "3sum", "three-sum", 
-            "four sum", "4sum", "four-sum", "valid parentheses", "merge intervals",
-            "climbing stairs", "house robber", "coin change", "longest substring",
-            "palindrome", "reverse linked list", "binary tree traversal",
-            "binary search", "depth first search", "DFS", "breadth first search", "BFS",
-            "dynamic programming", "DP", "greedy algorithm", "backtracking",
-            "sliding window", "two pointers", "fast slow pointers",
-            
-            # Data structures
-            "linked list", "binary tree", "binary search tree", "BST",
-            "hash map", "hash table", "hash set", "array", "stack", "queue",
-            "heap", "priority queue", "trie", "graph", "adjacency list",
-            "adjacency matrix", "disjoint set", "union find",
-            
-            # Programming languages
-            "Python", "Java", "JavaScript", "TypeScript", "C++", "C sharp",
-            "Go", "Rust", "Swift", "Kotlin", "Scala", "Ruby", "PHP",
-            
-            # Common programming terms (with pronunciation variations)
-            "algorithm", "algorithms", "complexity", "time complexity", "space complexity",
-            "Big O", "big oh", "O of n", "O of log n", "O of n squared", "O of 1", "O one",
-            "recursion", "recursive", "iteration", "iterative", "memoization", "tabulation",
-            "optimization", "optimize", "brute force", "optimal solution", "suboptimal",
-            "amortized", "worst case", "best case", "average case",
-            
-            # Technical interview terms
-            "edge case", "corner case", "test case", "unit test",
-            "refactor", "optimize", "debug", "runtime", "memory",
-            "scalability", "performance", "bottleneck",
-            
-            # Common coding patterns
-            "singleton", "factory", "observer", "decorator", "adapter",
-            "strategy", "command", "facade", "proxy", "builder",
-            
-            # Database and system design
-            "SQL", "NoSQL", "database", "schema", "index", "query",
-            "JOIN", "LEFT JOIN", "INNER JOIN", "GROUP BY", "ORDER BY",
-            "API", "REST", "GraphQL", "microservices", "monolith",
-            "load balancer", "cache", "Redis", "MongoDB", "PostgreSQL",
-            
-            # Web development
-            "React", "Angular", "Vue", "Node.js", "Express", "Django",
-            "Flask", "Spring", "HTML", "CSS", "DOM", "JSON", "XML",
-            "HTTP", "HTTPS", "GET", "POST", "PUT", "DELETE",
-            
-            # Common technical terms
-            "variable", "function", "method", "class", "object", "instance",
-            "inheritance", "polymorphism", "encapsulation", "abstraction",
-            "interface", "abstract", "static", "final", "const", "let", "var",
-            "async", "await", "promise", "callback", "closure", "scope",
-            
-            # Numbers and common values
-            "zero", "one", "two", "three", "four", "five", "null", "undefined",
-            "true", "false", "boolean", "integer", "string", "float", "double"
-        ]
-        
-        # Prioritize keyterms based on user's selected languages
-        prioritized_keyterms = []
-        
-        # Add user's selected languages first (higher priority)
-        if user_languages:
-            for lang in user_languages:
-                lang_lower = lang.lower()
-                # Add language-specific terms first
-                if lang_lower == 'python':
-                    prioritized_keyterms.extend(['Python', 'Django', 'Flask', 'pandas', 'numpy', 'pip', 'virtualenv'])
-                elif lang_lower == 'java':
-                    prioritized_keyterms.extend(['Java', 'Spring', 'Maven', 'Gradle', 'JVM', 'JDK', 'servlet'])
-                elif lang_lower == 'javascript':
-                    prioritized_keyterms.extend(['JavaScript', 'Node.js', 'React', 'Vue', 'Angular', 'npm', 'webpack'])
-                elif lang_lower == 'typescript':
-                    prioritized_keyterms.extend(['TypeScript', 'interface', 'type', 'generic', 'decorator'])
-                elif lang_lower == 'c++':
-                    prioritized_keyterms.extend(['C++', 'STL', 'vector', 'iterator', 'template', 'namespace'])
-                elif lang_lower == 'sql':
-                    prioritized_keyterms.extend(['SQL', 'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'JOIN', 'WHERE'])
-        
-        # Add general programming terms
-        prioritized_keyterms.extend(keyterms)
-        
-        # Remove duplicates while preserving order
+        """Use a small, balanced vocabulary without forcing phonetic replacements."""
+        language_terms = {
+            'python': ['Python', 'Django', 'Flask', 'pandas', 'NumPy'],
+            'java': ['Java', 'Spring', 'JVM', 'Maven'],
+            'javascript': ['JavaScript', 'Node.js', 'React', 'Vue', 'Angular'],
+            'typescript': ['TypeScript', 'generics'],
+            'c++': ['C++', 'STL', 'vector'],
+            'sql': ['SQL', 'JOIN', 'GROUP BY', 'window function'],
+        }
+        terms = []
+        for language in user_languages or []:
+            terms.extend(language_terms.get(language.lower(), [language]))
+        terms.extend([
+            'API', 'REST', 'GraphQL', 'SQL', 'NoSQL', 'PostgreSQL', 'MongoDB',
+            'Redis', 'microservices', 'load balancer', 'rate limiting', 'sharding',
+            'replication', 'distributed systems', 'eventual consistency', 'Kafka',
+            'Docker', 'Kubernetes', 'AWS', 'CI/CD', 'OAuth', 'JWT',
+            'time complexity', 'space complexity', 'Big O', 'binary search',
+            'linked list', 'binary search tree', 'hash map', 'hash set',
+            'priority queue', 'trie', 'depth first search', 'breadth first search',
+            'dynamic programming', 'memoization', 'backtracking', 'sliding window',
+            'two pointers', 'two sum', 'merge intervals', 'LRU cache',
+            'recursion', 'concurrency', 'deadlock', 'polymorphism', 'encapsulation',
+            'inheritance', 'dependency injection', 'unit testing', 'LeetCode',
+        ])
         seen = set()
-        final_keyterms = []
-        for term in prioritized_keyterms:
-            if term not in seen:
-                seen.add(term)
-                final_keyterms.append(term)
-        
-        # Join keyterms with proper URL encoding for multiple keyterms
-        # Using space separation as recommended by Deepgram for phrase boosting
-        # Limit to ensure we stay under 500 token limit (roughly 80-85 terms)
-        keyterm_string = " ".join(final_keyterms[:85])  # Conservative limit to stay under 500 tokens
-        
-        print(f"🔧 Programming keyterms configured: {len(final_keyterms[:85])} terms")
-        if user_languages:
-            print(f"🎯 Prioritized for languages: {', '.join(user_languages)}")
-        print(f"📝 Sample keyterms: {', '.join(final_keyterms[:10])}...")
-        
-        return final_keyterms[:85]
+        result = []
+        for term in terms:
+            if term.casefold() not in seen:
+                seen.add(term.casefold())
+                result.append(term)
+        return result[:75]  # Bounded short phrases stay within the provider's keyterm budget.
 
     async def start(self):
         """Starts the Deepgram transcription connection, retrying initial failures.
@@ -199,6 +126,8 @@ class DeepgramManager:
         """
         last_error = None
         for attempt in range(1, self._initial_connect_max_attempts + 1):
+            if self.stop_event.is_set():
+                raise RuntimeError('Transcription startup was stopped')
             try:
                 await self._connect_once()
                 self._reconnect_attempts = 0  # Reset on successful connect
@@ -220,12 +149,23 @@ class DeepgramManager:
 
     async def _connect_once(self):
         """Create a fresh Deepgram connection and start it (single attempt)."""
+        previous = self.dg_connection
         self.dg_connection = self.deepgram.listen.asynclive.v("1")
-
-        self.dg_connection.on(LiveTranscriptionEvents.Open, self.on_open)
-        self.dg_connection.on(LiveTranscriptionEvents.Transcript, self.on_message)
-        self.dg_connection.on(LiveTranscriptionEvents.Error, self.on_error)
-        self.dg_connection.on(LiveTranscriptionEvents.Close, self.on_close)
+        connection = self.dg_connection
+        for event, callback in ((LiveTranscriptionEvents.Open, self.on_open),
+                (LiveTranscriptionEvents.Transcript, self.on_message),
+                (LiveTranscriptionEvents.SpeechStarted, self.on_speech_started),
+                (LiveTranscriptionEvents.UtteranceEnd, self.on_utterance_end),
+                (LiveTranscriptionEvents.Error, self.on_error), (LiveTranscriptionEvents.Close, self.on_close)):
+            async def current_callback(*args, _callback=callback, **kwargs):
+                if connection is self.dg_connection:
+                    await _callback(*args, **kwargs)
+            connection.on(event, current_callback)
+        if previous is not None:
+            try:
+                await asyncio.wait_for(previous.finish(), timeout=2)
+            except Exception:
+                pass  # A failed old socket must not prevent a replacement connection.
 
         # Generate programming and technical keyterms for better accuracy (List[str])
         programming_keyterms = self.get_programming_keyterms(self.user_languages)
@@ -237,12 +177,12 @@ class DeepgramManager:
             smart_format=True,
             encoding="linear16",
             channels=1,
-            sample_rate=48000,  # Pinned client-side by TARGET_SAMPLE_RATE in web/js/audio_handler.js
+            sample_rate=self.sample_rate,
             diarize=False,
             punctuate=True,
             # Critical speech detection parameters - responsive endpointing
-            utterance_end_ms="1000",
-            endpointing=500,
+            utterance_end_ms="2000",
+            endpointing=1500,
             # Additional settings
             vad_events=True,
             interim_results=True,
@@ -252,43 +192,12 @@ class DeepgramManager:
             alternatives=1,
             # Programming keyterms for better technical accuracy
             keyterm=programming_keyterms,
-            replace=[
-                "2 SIM:two sum",
-                "two sim:two sum",
-                "to sum:two sum",
-                "too sum:two sum",
-                "2 sum:two sum",
-                "three sim:three sum",
-                "3 SIM:three sum",
-                "3 sum:three sum",
-                "four sim:four sum",
-                "4 SIM:four sum",
-                "to pointer:two pointers",
-                "too pointer:two pointers",
-                "two pointer:two pointers",
-                "link list:linked list",
-                "linklist:linked list",
-                "deep first search:depth first search",
-                "deep-first search:depth first search",
-                "breath first search:breadth first search",
-                "breath-first search:breadth first search",
-                "binary search tree:BST",
-                "big oh:Big O",
-                "big O:Big O",
-                "o of n:O(n)",
-                "O of N:O(n)",
-                "o of one:O(1)",
-                "O of 1:O(1)",
-                "hash set:HashSet",
-                "hash map:HashMap",
-                "leet code:LeetCode",
-                "lead code:LeetCode",
-                "late code:LeetCode"
-            ]
+
         )
         
         try:
-            await self.dg_connection.start(options)
+            if await asyncio.wait_for(self.dg_connection.start(options), timeout=10) is False:
+                raise ConnectionError('Transcription connection could not start')
             self.is_connected = True
         except Exception as e:
             self.is_connected = False
@@ -361,94 +270,64 @@ class DeepgramManager:
 
     async def on_open(self, *args, **kwargs):
         print("🔗 Deepgram connection opened")
-        self.is_connected = True
         self._reconnect_attempts = 0
-        await self._emit_status("connected")
-        # Flush buffered audio accumulated during reconnection
-        ring_buf = getattr(self, "audio_ring_buffer", None)
-        if ring_buf and self.dg_connection:
-            while ring_buf:
-                chunk = ring_buf.popleft()
-                try:
-                    await self.dg_connection.send(chunk)
-                except Exception as e:
-                    print(f"Error flushing audio ring buffer: {e}")
-                    ring_buf.appendleft(chunk)
-                    break
+        async with self._send_lock:
+            self.is_connected = True
+            await self._drain_audio()
+        if self.is_connected:
+            await self._emit_status("connected")
+
+    async def on_speech_started(self, *args, **kwargs):
+        if not self.stop_event.is_set():
+            result = kwargs.get('speech_started')
+            await self.transcript_callback({'type': 'speech_started',
+                'timestamp': getattr(result, 'timestamp', None)})
+
+    async def on_utterance_end(self, *args, **kwargs):
+        if not self.stop_event.is_set():
+            result = kwargs.get('utterance_end')
+            await self.transcript_callback({
+                'type': 'utterance_end',
+                'last_word_end': getattr(result, 'last_word_end', None),
+            })
 
     async def on_message(self, *args, **kwargs):
         if self.stop_event.is_set():
             return
-        
         try:
             result = kwargs['result']
-            
-            # Check if result has the expected structure and non-empty transcript
-            if (hasattr(result, 'channel') and 
-                hasattr(result.channel, 'alternatives') and 
-                len(result.channel.alternatives) > 0):
-                
-                alternative = result.channel.alternatives[0]
-                transcript = alternative.transcript
-                
-                if len(transcript.strip()) > 0:  # Only process non-empty transcripts
-                    # Check if this is a final result or interim
-                    is_final = getattr(result, 'is_final', True)
-                    
-                    # Debug logging to track final vs interim
-                    result_type = "FINAL" if is_final else "interim"
-                    print(f"🔍 Deepgram result type: {result_type}, is_final: {is_final}")
-                    
-                    # Get speaker from words array (Deepgram's diarization format)
-                    speaker = 0  # Default to candidate (when diarization is disabled, all speech is from speaker 0)
-                    
-                    # Only try to extract speaker info if diarization was enabled
-                    # When diarization is disabled, Deepgram doesn't provide speaker information
-                    try:
-                        if hasattr(alternative, 'words') and len(alternative.words) > 0:
-                            # Use the speaker of the first word
-                            first_word = alternative.words[0]
-                            if hasattr(first_word, 'speaker') and first_word.speaker is not None:
-                                speaker = first_word.speaker
-                            elif hasattr(first_word, '__getitem__') and 'speaker' in first_word:
-                                # Fallback: try to access speaker as dictionary key
-                                speaker = first_word['speaker']
-                    except (AttributeError, KeyError, IndexError):
-                        # If any error occurs accessing speaker info, stick with default (speaker 0)
-                        # This is expected when diarization is disabled
-                        pass
-                    
-                    if is_final:
-                        # Process final results immediately - no buffering
-                        print(f"✅ FINAL RESULT: Speaker {speaker} - '{transcript.strip()}'")
-                        await self.send_final_result(speaker, transcript.strip())
-                    else:
-                        # Show interim results immediately for real-time feedback
-                        print(f"📝 TRANSCRIPT (interim): Speaker {speaker} - '{transcript.strip()}'")
-                        
-                        # Send interim updates to client for real-time display
-                        interim_data = {
-                            "speaker": speaker,
-                            "transcript": transcript.strip(),
-                            "is_final": False
-                        }
-                        await self.transcript_callback(interim_data)
-                        
-        except Exception as e:
-            print(f"❌ ERROR: Exception in transcript processing: {e}")
+            alternatives = result.channel.alternatives
+            if not alternatives:
+                return
+            alternative = alternatives[0]
+            transcript = alternative.transcript.strip()
+            words = getattr(alternative, 'words', None) or []
+            metadata = {
+                'speech_final': bool(getattr(result, 'speech_final', False)),
+                'confidence': getattr(alternative, 'confidence', None),
+                'last_word_end': getattr(words[-1], 'end', None) if words else None,
+            }
+            if not transcript:
+                if metadata['speech_final']:
+                    await self.transcript_callback({'type': 'utterance_end', **metadata})
+                return
+            speaker = getattr(words[0], 'speaker', None) if words else None
+            speaker = speaker if speaker is not None else 0
+            if getattr(result, 'is_final', False):
+                await self.send_final_result(speaker, transcript, **metadata)
+            else:
+                await self.transcript_callback({
+                    'speaker': speaker, 'transcript': transcript,
+                    'is_final': False, **metadata,
+                })
+        except Exception as error:
+            print(f'Transcript processing failed: {error}')
 
-    # Removed buffering system - final results are now processed immediately
-
-    async def send_final_result(self, speaker, transcript):
-        """Send the final result to the callback."""
-        print(f"📝 TRANSCRIPT (FINAL): Speaker {speaker} - '{transcript}'")
-        
-        transcript_data = {
-            "speaker": speaker,
-            "transcript": transcript,
-            "is_final": True
-        }
-        await self.transcript_callback(transcript_data)
+    async def send_final_result(self, speaker, transcript, **metadata):
+        """Keep the recognized text and endpoint metadata together."""
+        await self.transcript_callback({
+            'speaker': speaker, 'transcript': transcript, 'is_final': True, **metadata,
+        })
 
     async def on_error(self, *args, **kwargs):
         if self.stop_event.is_set():
@@ -474,30 +353,40 @@ class DeepgramManager:
         """Sends an audio chunk to Deepgram, buffering if temporarily disconnected."""
         if self.stop_event.is_set():
             return
+        async with self._send_lock:
+            ring = self.audio_ring_buffer
+            self._last_audio_at = time.monotonic()
+            dropped = ring.maxlen is not None and len(ring) == ring.maxlen
+            ring.append(bytes(audio_chunk))
+            # Bound by duration as well as frame count (the backup sends larger frames).
+            while ring and sum(map(len, ring)) > self.sample_rate * 2 * 4:
+                ring.popleft()
+                dropped = True
+            if dropped and time.monotonic() - self._last_gap_warning > 10:
+                self._last_gap_warning = time.monotonic()
+                await self._emit_status('gap', 'Audio buffer exceeded four seconds; oldest speech was dropped.')
+            await self._drain_audio()
 
-        ring_buf = getattr(self, "audio_ring_buffer", None)
-
-        if self.is_connected and self.dg_connection:
-            # Flush ring buffer first if any frames accumulated during reconnect
-            if ring_buf:
-                while ring_buf:
-                    buffered = ring_buf.popleft()
-                    try:
-                        await self.dg_connection.send(buffered)
-                    except Exception as e:
-                        print(f"Error flushing buffered chunk: {e}")
-                        ring_buf.appendleft(buffered)
-                        break
+    async def _drain_audio(self):
+        ring = self.audio_ring_buffer
+        if ring and time.monotonic() - self._last_audio_at > 4:
+            ring.clear()
+            await self._emit_status('gap', 'Expired audio was dropped after the connection outage.')
+        while ring and self.is_connected and self.dg_connection:
             try:
-                await self.dg_connection.send(audio_chunk)
-            except Exception as e:
-                print(f"Error sending live audio chunk, buffering: {e}")
-                if ring_buf is not None:
-                    ring_buf.append(audio_chunk)
-        else:
-            # Buffer audio while disconnected so speech is not lost during transient reconnects
-            if ring_buf is not None:
-                ring_buf.append(audio_chunk)
+                sent = await asyncio.wait_for(self.dg_connection.send(ring[0]), timeout=2)
+                if sent is False:
+                    raise ConnectionError('Transcription socket rejected audio')
+            except Exception:
+                self.is_connected = False
+                await self._emit_status('reconnecting', 'Transcription send failed; retaining queued audio.')
+                asyncio.create_task(self._reconnect())
+                return
+            ring.popleft()
+
+    async def clear_audio_buffer(self):
+        async with self._send_lock:
+            self.audio_ring_buffer.clear()
 
     async def finish(self):
         """Signals the connection to close and finishes it."""
@@ -517,3 +406,5 @@ class DeepgramManager:
         if self.dg_connection:
             await self.dg_connection.finish()
             print("✅ Deepgram connection closed successfully")
+        self.is_connected = False
+        await self.clear_audio_buffer()

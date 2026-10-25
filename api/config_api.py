@@ -1,4 +1,5 @@
 import orjson
+import asyncio
 import aiofiles
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -23,6 +24,11 @@ from core.config import (
 from core.env_utils import EnvManager
 
 router = APIRouter()
+
+@router.get("/api/audio-outputs")
+async def get_audio_outputs():
+    from services.native_audio import list_audio_outputs
+    return await asyncio.to_thread(list_audio_outputs)
 
 class TransparencyRequest(BaseModel):
     transparency: float  # 0.0 to 1.0
@@ -105,6 +111,7 @@ async def get_ai_providers():
                 "models": p.get("models", []),
                 "visionModels": p.get("visionModels", []),
                 "supportsVision": p.get("supportsVision", False),
+                "hasUsableKey": bool(resolve_provider_keys(p)),
                 # Images this provider accepts in a single request. The
                 # screenshot queue caps itself to this so a batch is never
                 # assembled that the selected vision model will reject.
@@ -112,7 +119,7 @@ async def get_ai_providers():
                 "defaultPrimary": p.get("defaultPrimary", False),
                 "defaultSecondary": p.get("defaultSecondary", False),
                 "defaultVisionPrimary": p.get("defaultVisionPrimary", False),
-                "defaultVisionSecondary": p.get("defaultVisionSecondary", False),
+                "defaultVisionSecondary": p.get("defaultVisionSecondary", False) and p.get("name") != "Cerebras",
                 "defaultModel": p.get("defaultModel"),
                 "defaultVisionModel": p.get("defaultVisionModel"),
                 # Keep legacy default for backward compatibility
@@ -293,7 +300,7 @@ async def export_transcript(request: ExportTranscriptRequest):
 
     lines = [f"Interview transcript — {datetime.now().strftime('%Y-%m-%d %H:%M')}"]
     ctx = session.llm_manager.shared_context.get_complete_context() if session.llm_manager else {}
-    persistent = (ctx.get('persistent') or {}).get('persistent') or {}
+    persistent = ctx.get('persistent') or {}
     if persistent.get('candidate_name') or persistent.get('target_role'):
         lines.append(f"Candidate: {persistent.get('candidate_name', '')} | Role: {persistent.get('target_role', '')}")
     lines.append("=" * 60)

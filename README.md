@@ -1,4 +1,31 @@
-# 👻 SuperAssist — The AI They Can't See, Can't Detect, Can't Stop
+# VeyraCue desktop interview assistant
+
+This local desktop adaptation follows Parakeet AI's public interview workflow and reuses the existing Deepgram, Groq, Gemini, and Cerebras configuration. Double-click `silent_run.vbs` for the native desktop window with no visible terminal; `run.bat` is the diagnostic launcher. No external browser is required. Startup diagnostics and errors go to `output/desktop-launch.log`, and a failed launch shows an error message. Silent launch suppresses the app's console transcript output.
+
+Add your interview details and continue through audio setup. During the interview, the setup sidebar disappears and the window stays on top. Live answers take most of the window; the transcript sits in a narrow rail. Screenshot and Chat remain in the compact toolbar, while More contains transcript export, microphone mute, pause, clear, and model details. `Ctrl+Shift+Win+H` hides or restores the overlay while the session continues, `Ctrl+Shift+Win+K` toggles click-through, `Ctrl+Shift+Win+F1/F2/F3` changes opacity, and `Ctrl+Shift+Win+U` pauses audio. Windows WebView2 runs the interface, with background throttling disabled for audio processing. In the live workspace, use Auto answer for automatic responses, Answer for the pending question, Chat for a typed follow-up, and Screenshot for visual questions. Save transcript exports the conversation locally; End also exports before closing the session.
+
+Provider keys stay in `.env` and `ai_providers.json`. Only providers with usable configured keys are offered for sessions. This is an independent local implementation; it does not connect to Parakeet's account or billing service. Public reference: https://www.parakeet-ai.com/ . REA capture and browser validation artifacts are kept in the ignored `output/` directory.
+
+Windows shortcuts use **Ctrl+Shift+Win** (the Windows logo key) so ordinary Zoom/Meet shortcuts remain available. The old Alt bindings and fallback aliases are disabled on Windows. Hotkeys are registered exclusively; an occupied combination is left unbound and reported in `output/desktop-launch.log`.
+
+| Key after Ctrl+Shift+Win | Action |
+| --- | --- |
+| H / K | Show or hide / click-through |
+| M / U | Mute assistant microphone / pause assistant capture |
+| S / P / R / V / T | Capture / process / clear screenshots / vision mode / vision model |
+| Q / W / E / G | Primary / secondary / automatic model / full answer or hints |
+| F1 / F2 / F3 / [ / ] | Opacity presets / decrease / increase opacity |
+| Arrow keys | Move the overlay |
+| PageUp / PageDown | Scroll answers while held |
+| O / Y | Reset interview context / enable stealth mode |
+
+macOS retains its existing Option shortcuts. These controls mute or pause the assistant, independently of the meeting application's microphone controls.
+
+Meeting shortcut references: [Zoom](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0067050) and [Google Meet](https://support.google.com/meet/answer/9298571?hl=en).
+
+Legacy engine and desktop documentation follows below; its original names and screenshots refer to the upstream project.
+
+The workspace uses a dark theme with high-contrast live answers. For Windows interviews, choose **Windows direct audio (recommended)** during audio setup and select the headphones or speakers used by your meeting. The interviewer and microphone are transcribed separately. Questions stay together through normal hesitations, and the answer engine interprets imperfect English using conversation context. Browser audio sharing remains available as a fallback. See [AUDIO_PLAN.md](AUDIO_PLAN.md) for capture choices, recovery behavior, and limits.
 
 <div align="center">
   <img src="logo.png" alt="SuperAssist Logo" width="300" />

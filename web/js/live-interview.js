@@ -57,6 +57,7 @@ class LiveInterviewUI {
     // Initialize elements
     init() {
         this.conversationStream = document.getElementById('conversation-stream');
+        this.transcriptStream = document.getElementById('transcript-stream') || this.conversationStream;
         this.activityIndicator = document.getElementById('activity-indicator');
         this.endButton = document.getElementById('end-interview-btn');
         this.resetButton = document.getElementById('reset-interview-btn');
@@ -159,6 +160,7 @@ class LiveInterviewUI {
     }
 
     handleWheelEvent(e) {
+        if (e.deltaY < 0) this.enterReadingMode();
         // Additional intent detection: rapid up scrolls indicate reading intent
         // U2 fix: a stale streak (last scroll >5s ago) doesn't count as intent.
         if (e.deltaY < 0) { // Scrolling up
@@ -277,6 +279,10 @@ class LiveInterviewUI {
     }
 
     showResumeScrollButton() {
+        if (this.conversationStream && this.conversationStream.scrollHeight <= this.conversationStream.clientHeight) {
+            this.hideResumeScrollButton();
+            return;
+        }
         if (this.scrollState.resumeScrollButton) {
             this.scrollState.resumeScrollButton.classList.remove('hidden');
             
@@ -306,6 +312,7 @@ class LiveInterviewUI {
     setupScrollKeyboardShortcuts() {
         // Add keyboard shortcuts for scroll control
         document.addEventListener('keydown', (e) => {
+            if (!document.getElementById('live-view')?.classList.contains('active')) return;
             // Only handle shortcuts when not typing in an input
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
                 return;
@@ -346,16 +353,16 @@ class LiveInterviewUI {
         let indicatorText = text;
         
         if (status.universal) {
-            indicatorText = '⏸️ System Paused - Press Alt/⌥+U to resume';
+            indicatorText = '⏸️ System Paused - Press Ctrl+Shift+Win+U to resume';
             this.activityIndicator.classList.add('paused');
         } else if (status.microphone) {
-            indicatorText = '🔇 Microphone Muted - Press Alt/⌥+M to unmute';
+            indicatorText = '🔇 Microphone Muted - Press Ctrl+Shift+Win+M to unmute';
             this.activityIndicator.classList.remove('paused');
         } else {
             this.activityIndicator.classList.remove('paused');
         }
 
-        this.activityIndicator.querySelector('span').textContent = indicatorText;
+        this.activityIndicator.querySelector('.stealth-indicator-text').textContent = indicatorText;
         this.activityIndicator.classList.add('show');
     }
 
@@ -376,7 +383,7 @@ class LiveInterviewUI {
         if (isInterim) {
             if (!this.currentInterviewerElement) {
                 this.currentInterviewerElement = this.createMessageElement('', 'interviewer');
-                this.conversationStream.appendChild(this.currentInterviewerElement);
+                this.transcriptStream.appendChild(this.currentInterviewerElement);
                 this.currentInterimBase = '';
                 this.updateEmptyState();
             }
@@ -440,7 +447,7 @@ class LiveInterviewUI {
         if (isInterim) {
             if (!this.currentCandidateElement) {
                 this.currentCandidateElement = this.createMessageElement('', 'candidate');
-                this.conversationStream.appendChild(this.currentCandidateElement);
+                this.transcriptStream.appendChild(this.currentCandidateElement);
                 this.currentCandidateInterimBase = '';
                 this.updateEmptyState();
             }
@@ -542,7 +549,8 @@ class LiveInterviewUI {
         const filteredContent = this.filterThinkingContent(content);
         
         const messageElement = this.createMessageElement(filteredContent, type);
-        this.conversationStream.appendChild(messageElement);
+        const stream = type === 'interviewer' || type === 'candidate' ? this.transcriptStream : this.conversationStream;
+        stream.appendChild(messageElement);
         this.startStreaming(messageElement, filteredContent);
         this.enforceMessageCap();
         
@@ -562,16 +570,16 @@ class LiveInterviewUI {
         const label = document.createElement('span');
         label.className = 'label';
         
-        // Set stealth code comment label based on type
+        // Keep speaker labels separate from assistant responses.
         switch (type) {
             case 'interviewer':
-                label.textContent = '// prompt';
+                label.textContent = 'Interviewer';
                 break;
             case 'candidate':
-                label.textContent = '// input';
+                label.textContent = 'You';
                 break;
             default:
-                label.textContent = '// solution';
+                label.textContent = type === 'system-error' ? 'Connection notice' : type === 'system-message' ? 'Session' : 'Answer';
                 break;
         }
         
@@ -595,11 +603,11 @@ class LiveInterviewUI {
         
         const label = document.createElement('span');
         label.className = 'label';
-        label.innerHTML = '// visual context';
+        label.textContent = 'Screenshot answer';
         
         const metaInfo = document.createElement('div');
         metaInfo.className = 'vision-meta';
-        metaInfo.textContent = '// auto-sync';
+        metaInfo.textContent = 'Screen context';
         
         headerDiv.appendChild(label);
         headerDiv.appendChild(metaInfo);
@@ -985,7 +993,8 @@ class LiveInterviewUI {
     // scroll/paint. Keep only the most recent MAX_DOM_MESSAGES.
     enforceMessageCap(max = 60) {
         if (!this.conversationStream) return;
-        const messages = this.conversationStream.querySelectorAll(':scope > .message');
+        const messages = [...this.conversationStream.querySelectorAll(':scope > .message'),
+            ...(this.transcriptStream !== this.conversationStream ? this.transcriptStream.querySelectorAll(':scope > .message') : [])];
         if (messages.length <= max) return;
         const active = new Set(
             [this.currentInterviewerElement, this.currentCandidateElement,
@@ -1333,6 +1342,10 @@ class LiveInterviewUI {
         if (this.conversationStream) {
             this.conversationStream.innerHTML = '';
         }
+        if (this.transcriptStream) this.transcriptStream.innerHTML = '';
+        if (this.interimStaleTimer) clearTimeout(this.interimStaleTimer);
+        this.currentInterimBase = '';
+        this.currentCandidateInterimBase = '';
         
         // Clear all references to prevent multiple elements
         this.currentInterviewerElement = null;
@@ -1358,6 +1371,9 @@ class LiveInterviewUI {
             this.conversationStream.classList.add('no-messages');
         } else {
             this.conversationStream.classList.remove('no-messages');
+        }
+        if (this.transcriptStream && !this.transcriptReading) {
+            this.transcriptStream.scrollTop = this.transcriptStream.scrollHeight;
         }
     }
 
@@ -1393,11 +1409,11 @@ class LiveInterviewUI {
             if (isMuted) {
                 this.muteButton.classList.add('muted');
                 if (textSpan) textSpan.textContent = 'Muted';
-                this.muteButton.title = 'Microphone is Muted (Click or Alt/⌥+M to unmute)';
+                this.muteButton.title = 'Microphone is Muted (Click or Ctrl+Shift+Win+M to unmute)';
             } else {
                 this.muteButton.classList.remove('muted');
                 if (textSpan) textSpan.textContent = 'Mute';
-                this.muteButton.title = 'Microphone is Active (Click or Alt/⌥+M to mute)';
+                this.muteButton.title = 'Microphone is Active (Click or Ctrl+Shift+Win+M to mute)';
             }
         }
     }
@@ -1409,11 +1425,11 @@ class LiveInterviewUI {
             if (isPaused) {
                 this.pauseButton.classList.add('paused');
                 if (textSpan) textSpan.textContent = 'Paused';
-                this.pauseButton.title = 'AI Listening Paused (Click or Alt/⌥+U to resume)';
+                this.pauseButton.title = 'AI Listening Paused (Click or Ctrl+Shift+Win+U to resume)';
             } else {
                 this.pauseButton.classList.remove('paused');
                 if (textSpan) textSpan.textContent = 'Pause';
-                this.pauseButton.title = 'AI Listening Active (Click or Alt/⌥+U to pause)';
+                this.pauseButton.title = 'AI Listening Active (Click or Ctrl+Shift+Win+U to pause)';
             }
         }
     }
@@ -1718,4 +1734,4 @@ window.isThinkingFilterEnabled = () => {
 };
 
 
-export default window.liveInterviewUI; 
+export default window.liveInterviewUI;

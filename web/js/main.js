@@ -13,7 +13,7 @@ import muteManager from './mute-manager.js';
 import { autofillForTesting } from './dev.js';
 import { loadConfig, isDev, devLog, devWarn, devError, applyConsoleGate } from './config.js';
 import liveInterviewUI from './live-interview.js';
-import hotkeyManager from './hotkeys.js';
+import hotkeyManager, { isAppShortcut } from './hotkeys.js';
 import presetManager from './preset-manager.js';
 import screenshotService from './screenshot-service.js';
 import { ConfigManager } from './config-manager.js';
@@ -28,7 +28,7 @@ const configManager = new ConfigManager(stateManager);
 // Expose to window for inter-module integration
 window.providerManager = providerManager;
 window.configManager = configManager;
-window.wsHandler = webSocketHandler; // P4: used by Alt+G hotkey
+window.wsHandler = webSocketHandler; // P4: used by Ctrl+Shift+Win+G hotkey
 
 // --- Dependency Injection ---
 // Wire the managers together to avoid race conditions and reliance on globals.
@@ -46,6 +46,8 @@ const micSelect = document.getElementById('mic-select');
 const proceedButton = document.getElementById('proceed-to-checks');
 const startButton = document.getElementById('start-interview-button');
 const backButton = document.getElementById('back-to-onboarding-btn');
+let sessionTimer;
+let sessionStartedAt;
 
 // --- Tab Management ---
 function setupTabs() {
@@ -80,7 +82,7 @@ function setupTabs() {
             e.stopPropagation();
             autofillForTesting();
             fillDemoBtn.textContent = '✅ Filled!';
-            setTimeout(() => { fillDemoBtn.textContent = '⚡ Demo'; }, 1500);
+            setTimeout(() => { fillDemoBtn.textContent = 'Try sample details'; }, 1500);
         });
     }
 }
@@ -90,16 +92,23 @@ function setupTabs() {
 function switchView(targetView) {
     Object.values(views).forEach(view => view.classList.remove('active'));
     views[targetView].classList.add('active');
+    document.body.dataset.view = targetView;
 }
 
 function handleOnboarding() {
+    const validation = document.getElementById('session-validation');
+    validation.hidden = true;
     if (stateManager.handleOnboarding()) {
         switchView('preflight');
         runPreFlightChecks();
+    } else {
+        validation.textContent = 'Add your name, company, role, and resume, then choose an interview focus and AI model.';
+        validation.hidden = false;
     }
 }
 
 async function runPreFlightChecks() {
+    await loadAudioOutputs();
     // --- 1. Microphone Check ---
     // First, ensure we have microphone permissions as this is a prerequisite.
     const micPermissionCheck = document.getElementById('check-mic-permission');
@@ -186,18 +195,48 @@ async function startInterview() {
         webSocketHandler.sendAudioChunk(audioData, muteManager.isMicrophoneMuted(), speakerHint);
     };
 
-    const processingStarted = await startAudioProcessing(micSelect.value, onAudioData);
+    const nativeCapture = document.getElementById('audio-capture-mode').value === 'native';
+    const processingStarted = await startAudioProcessing(micSelect.value, onAudioData, !nativeCapture);
 
-    if (!processingStarted) {
+    if (!processingStarted && !nativeCapture) {
         console.error("❌ Could not start audio streams. Please check permissions and try again.");
         switchView('preflight');
+        const notice = document.getElementById('audio-setup-error');
+        notice.hidden = false;
+        notice.textContent = 'Audio capture could not start. Check microphone access. For browser capture, select your meeting tab or entire screen and enable Share audio.';
+        hotkeyManager.setEnabled(false);
         return;
     }
+    if (!processingStarted && nativeCapture) {
+        liveInterviewUI.addMessage('Microphone access is unavailable. Windows system audio will still capture the interviewer. Enable microphone access and restart if you also want your own speech transcribed.', 'system-message');
+    }
 
-    webSocketHandler.startInterview();
+    try {
+        await webSocketHandler.startInterview();
+    } catch (error) {
+        stopAudioProcessing();
+        hotkeyManager.setEnabled(false);
+        webSocketHandler.endInterview();
+        switchView('preflight');
+        const notice = document.getElementById('audio-setup-error');
+        notice.textContent = `Session could not start: ${error.message}. Check the selected output or use browser capture.`;
+        notice.hidden = false;
+        await webSocketHandler.connect();
+        return;
+    }
+    document.getElementById('live-session-title').textContent = `${stateManager.appState.onboardingData.role} at ${stateManager.appState.onboardingData.company}`;
+    webSocketHandler.sendMessage('set_auto_answer', { enabled: document.getElementById('auto-answer-toggle').checked });
+    sessionStartedAt = Date.now();
+    clearInterval(sessionTimer);
+    sessionTimer = setInterval(() => {
+        const seconds = Math.floor((Date.now() - sessionStartedAt) / 1000);
+        document.getElementById('session-timer').textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+    }, 1000);
 }
 
 async function endInterview() {
+    clearInterval(sessionTimer);
+    document.getElementById('session-timer').textContent = '00:00';
     console.log('🔚 Ending interview and clearing state...');
 
     // P3: save the turn-by-turn transcript before the session is torn down.
@@ -299,6 +338,69 @@ function setupEventListeners() {
     proceedButton?.addEventListener('click', handleOnboarding);
     startButton?.addEventListener('click', startInterview);
     backButton?.addEventListener('click', () => switchView('onboarding'));
+    document.getElementById('audio-capture-mode').addEventListener('change', updateAudioCaptureHelp);
+    window.addEventListener('superassist:session-lost', () => {
+        stopAudioProcessing();
+        hotkeyManager.setEnabled(false);
+        clearInterval(sessionTimer);
+        switchView('preflight');
+        const notice = document.getElementById('audio-setup-error');
+        notice.hidden = false;
+        notice.textContent = 'The server restarted. Start a new session to resume transcription.';
+    });
+    navigator.mediaDevices?.addEventListener('devicechange', () => {
+        if (stateManager.isLiveInterviewActive() && document.getElementById('audio-capture-mode').value === 'native') {
+            liveInterviewUI.addMessage('Audio devices changed. If your meeting moved to different headphones or speakers, end this session and select the new output before restarting.', 'system-message');
+        }
+    });
+    document.querySelectorAll('[data-workspace-tab]').forEach(button => {
+        button.addEventListener('click', () => {
+            if (stateManager.isLiveInterviewActive()) {
+                liveInterviewUI.addMessage('End this session before changing session settings.', 'system-message');
+                return;
+            }
+            switchView('onboarding');
+            document.querySelector(`[data-tab="${button.dataset.workspaceTab}"]`).click();
+            document.querySelectorAll('.workspace-nav').forEach(item => item.classList.toggle('active', item === button));
+        });
+    });
+    document.getElementById('answer-btn').addEventListener('click', () => webSocketHandler.sendMessage('request_answer', {}));
+    const moreMenu = document.querySelector('.live-more');
+    document.addEventListener('click', event => {
+        if (!moreMenu.contains(event.target) || event.target.closest('.live-more-menu button')) moreMenu.open = false;
+    });
+    moreMenu.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            moreMenu.open = false;
+            moreMenu.querySelector('summary').focus();
+        }
+    });
+    document.getElementById('auto-answer-toggle').addEventListener('change', event => {
+        webSocketHandler.sendMessage('set_auto_answer', { enabled: event.target.checked });
+    });
+    document.getElementById('chat-btn').addEventListener('click', () => document.getElementById('chat-question').focus());
+    document.getElementById('chat-form').addEventListener('submit', event => {
+        event.preventDefault();
+        const input = document.getElementById('chat-question');
+        const question = input.value.trim();
+        if (!question || !webSocketHandler.socket || webSocketHandler.socket.readyState !== WebSocket.OPEN) return;
+        webSocketHandler.sendMessage('ask_question', { question });
+        liveInterviewUI.addMessage(question, 'candidate');
+        input.value = '';
+    });
+    document.getElementById('export-transcript-btn').addEventListener('click', async () => {
+        try { await webSocketHandler.exportTranscript(); }
+        catch (error) { liveInterviewUI.addMessage('Could not save the transcript. Try again before ending the session.', 'system-error'); }
+    });
+    document.getElementById('screenshot-btn').addEventListener('click', async () => {
+        if (!stateManager.appState.visionMode.isActive && !stateManager.toggleVisionMode()) return;
+        const captured = await captureScreenshot();
+        if (captured) await processScreenshots();
+    });
+    document.getElementById('transcript-stream').addEventListener('scroll', event => {
+        const stream = event.currentTarget;
+        liveInterviewUI.transcriptReading = stream.scrollHeight - stream.scrollTop - stream.clientHeight > 80;
+    }, { passive: true });
 
     // Provider change listeners
     const providerSelect = document.getElementById('ai-provider-select');
@@ -312,6 +414,35 @@ function setupEventListeners() {
     visionSecondaryProviderSelect?.addEventListener('change', providerManager.updateSecondaryVisionModelDropdown.bind(providerManager));
 
     setupGlobalCopyHandler();
+}
+
+async function loadAudioOutputs() {
+    const mode = document.getElementById('audio-capture-mode');
+    const output = document.getElementById('audio-output-select');
+    try {
+        const response = await fetch('/api/audio-outputs');
+        if (!response.ok) throw new Error('Could not list audio outputs');
+        const info = await response.json();
+        if (info.available && !mode.querySelector('[value=native]')) {
+            mode.add(new Option('Windows direct audio (recommended)', 'native'));
+            mode.value = 'native';
+        }
+        const selected = output.value;
+        output.replaceChildren(new Option(info.default ? `Windows default — ${info.default.replace(' [Loopback]', '')}` : 'Windows default output', ''));
+        for (const device of info.devices) output.add(new Option(device.name.replace(' [Loopback]', ''), device.name));
+        if (info.devices.some(d => d.name === selected)) output.value = selected;
+    } catch (error) {
+        console.warn('Native output capture unavailable:', error);
+    }
+    updateAudioCaptureHelp();
+}
+
+function updateAudioCaptureHelp() {
+    const native = document.getElementById('audio-capture-mode').value === 'native';
+    document.getElementById('audio-output-select').disabled = !native;
+    document.getElementById('audio-capture-help').textContent = native
+        ? 'No screen-sharing prompt is needed. Play meeting or YouTube audio through the selected headphones/speakers. System sound is captured directly, separately from your microphone. After changing output devices, restart the session.'
+        : 'Choose your meeting browser tab and enable Share audio. For a desktop meeting, share the entire screen with system audio. Use headphones.';
 }
 
 // Delegated copy handler for all code blocks
@@ -411,7 +542,7 @@ function setupPresetHotkeys() {
     document.addEventListener('keydown', (e) => {
         // Only work during live interview and if not focusing on input fields
         if (!e.target.matches('input, textarea, select') && stateManager.isLiveInterviewActive()) {
-            if (e.altKey && !e.ctrlKey && !e.shiftKey) {
+            if (isAppShortcut(e) && !e.repeat) {
                 switch (e.key.toLowerCase()) {
                     case 'q':
                         e.preventDefault();

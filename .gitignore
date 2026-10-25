@@ -23,3 +23,5 @@ ai_providers.json
 # --- Runtime artifacts ---
 # Interview transcript exports (personal data, never commit)
 exports/
+output/
+.playwright-cli/

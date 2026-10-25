@@ -18,6 +18,12 @@ class TestSecurityMiddleware:
         assert response.status_code == 200
         assert f'content="{APP_SESSION_TOKEN}"' in response.text
         assert f'window.__APP_TOKEN__ = "{APP_SESSION_TOKEN}"' in response.text
+        assert response.headers['cache-control'] == 'no-store'
+
+    def test_desktop_scripts_are_not_cached_across_updates(self, client):
+        response = client.get('/static/js/preset-manager.js')
+        assert response.status_code == 200
+        assert response.headers['cache-control'] == 'no-store'
 
     def test_public_diagnostic_endpoints_exempt(self, client):
         """Diagnostic / setup endpoints do not require token."""

@@ -39,7 +39,7 @@ class PresetManager {
                     <span class="preset-provider">Initializing...</span>
                 </div>
                 <div class="preset-hotkeys">
-                    <span class="hotkey-hint">Alt/⌥+Q: Primary | Alt/⌥+W: Secondary | Alt/⌥+E: Auto</span>
+                    <span class="hotkey-hint">Ctrl+Shift+Win+Q: Primary | Ctrl+Shift+Win+W: Secondary | Ctrl+Shift+Win+E: Auto</span>
                 </div>
             </div>
         `;
@@ -54,9 +54,9 @@ class PresetManager {
     insertPresetIndicator() {
         const liveView = document.getElementById('live-view');
         if (liveView && this.presetIndicatorElement && !document.getElementById('preset-indicator')) {
-            const liveHeader = liveView.querySelector('.live-header');
-            if (liveHeader) {
-                liveHeader.appendChild(this.presetIndicatorElement);
+            const modelSlot = liveView.querySelector('#live-model-slot');
+            if (modelSlot) {
+                modelSlot.appendChild(this.presetIndicatorElement);
                 console.log('✅ Preset indicator added to live view');
             }
         }
@@ -272,6 +272,7 @@ class PresetManager {
         
         if (presetNameElement) {
             presetNameElement.textContent = presetInfo.description || 'Unknown';
+            presetNameElement.title = presetNameElement.textContent;
             presetNameElement.className = `preset-name preset-${presetInfo.key}`;
         }
         
@@ -448,4 +449,4 @@ const presetManager = new PresetManager();
 // Make it globally accessible
 window.presetManager = presetManager;
 
-export default presetManager; 
+export default presetManager;

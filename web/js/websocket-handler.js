@@ -14,6 +14,10 @@ export class WebSocketHandler {
         this.connectionPromise = null;
         this.reconnectTimer = null;
         this.checks = {};
+        this.audioBuffer = [];
+        this.audioSessionReady = false;
+        this.audioHealth = {};
+        this.lastAudioGapWarning = 0;
         this.initializeCheckElements();
     }
 
@@ -45,6 +49,7 @@ export class WebSocketHandler {
         }
 
         this.is_intentionally_closing = false;
+        this.audioSessionReady = false;
         // Derive the host from the page origin. main.py picks a free port at
         // startup and falls back off 8002 when it is busy, so a hardcoded port
         // would break the socket exactly when the fallback kicks in.
@@ -131,6 +136,8 @@ export class WebSocketHandler {
 
     onClose(event, socket = this.socket) {
         if (socket !== this.socket) return;
+        this.audioSessionReady = false;
+        this.pendingStart?.reject(new Error('Connection lost during audio startup'));
         console.log(`[close] Connection closed. Intentional: ${this.is_intentionally_closing}`);
         this._rejectConnection(new Error("WebSocket connection closed before session establishment."));
         // This is now handled by the ProviderManager
@@ -159,11 +166,20 @@ export class WebSocketHandler {
         devLog("Received from backend:", data);
 
         if (data.type === 'session_created') {
+            const lostSession = this.session_id && this.session_id !== data.payload.session_id;
+            if (lostSession) {
+                this.audioBuffer = [];
+                liveInterviewUI.addMessage('The server restarted and the previous session was lost. End and restart this session.', 'system-error');
+                window.dispatchEvent(new CustomEvent('superassist:session-lost'));
+            }
             this.session_id = data.payload.session_id;
+            this.audioSessionReady = !lostSession;
             console.log(`🚀 New session started: ${this.session_id}`);
             // Resolve the connection promise now that session is confirmed.
             this._resolveConnection();
         } else if (data.type === 'session_resumed') {
+            this.audioSessionReady = true;
+            this.flushAudioBuffer();
             console.log(`✅ Session resumed: ${data.payload.session_id}`);
             liveInterviewUI.addMessage("Connection restored. Your session has been resumed.", "system-message");
             // Also resolve the promise on resume.
@@ -205,6 +221,8 @@ export class WebSocketHandler {
     }
 
     disconnect() {
+        this.audioBuffer = [];
+        this.audioSessionReady = false;
         this.is_intentionally_closing = true;
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
@@ -220,6 +238,18 @@ export class WebSocketHandler {
     // --- All original message handlers go here ---
     handleMessage(data) {
         switch (data.type) {
+            case 'interview_started':
+                this.audioSessionReady = true;
+                this.flushAudioBuffer();
+                this.pendingStart?.resolve(data.payload);
+                break;
+            case 'interview_start_failed':
+                this.pendingStart?.reject(new Error(data.payload.message));
+                break;
+            case 'audio_capture_status':
+            case 'stt_status':
+                this.updateAudioHealth(data.type === 'audio_capture_status' ? 'Meeting capture' : `Transcription (${data.payload.source || 'audio'})`, data.payload);
+                break;
             case 'api_key_status':
                 this.handleApiKeyStatus(data.payload);
                 break;
@@ -237,6 +267,9 @@ export class WebSocketHandler {
                 break;
             case 'ai_answer_complete':
                 this.handleAiAnswerComplete(data.payload);
+                break;
+            case 'auto_answer_status':
+                document.getElementById('auto-answer-toggle').checked = data.payload.enabled;
                 break;
             case 'preset_initialized':
                 this.handlePresetInitialized(data.payload);
@@ -282,15 +315,10 @@ export class WebSocketHandler {
     }
 
     handleTranscriptUpdate(payload) {
-        // With diarization disabled, all speech comes from speaker 0 and should be labeled as Interviewer
-        // With diarization enabled, speaker 0 = candidate, speaker 1+ = interviewer(s)
-        const speakerId = payload.speaker !== undefined ? payload.speaker : 0;
-        
-        // Since diarization is disabled, all speech (speaker 0) should be treated as interviewer
-        if (payload.is_final) {
-            liveInterviewUI.addInterviewerQuestion(payload.transcript, false);
+        if (payload.speaker_role === 'candidate') {
+            liveInterviewUI.addCandidateTranscript(payload.transcript, !payload.is_final);
         } else {
-            liveInterviewUI.addInterviewerQuestion(payload.transcript, true);
+            liveInterviewUI.addInterviewerQuestion(payload.transcript, !payload.is_final);
         }
     }
     
@@ -371,7 +399,9 @@ export class WebSocketHandler {
     }
 
     handleError(payload) {
+        this.pendingStart?.reject(new Error(payload.message || 'Session initialization failed'));
         console.error("WebSocket error:", payload);
+        liveInterviewUI.addMessage(payload.message || 'The request could not be completed.', 'system-error');
         if (window.presetManager) {
             presetManager.showErrorNotification(payload.message);
         }
@@ -393,20 +423,61 @@ export class WebSocketHandler {
 
     sendAudioChunk(chunk, is_muted, speakerHint = 'system') {
         if (window.muteManager?.isAudioPaused()) {
+            this.audioBuffer = [];
             return;
         }
         if (is_muted && speakerHint === 'microphone') {
             return;
         }
-        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+        {
             // P1.1: High-speed binary WebSocket transport (2-byte header + Linear16 PCM)
             // Header: Byte 0 = speaker (0x01: mic, 0x02: system), Byte 1 = muted (0x01: true, 0x00: false)
-            const rawBytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk.buffer || chunk);
+            const rawBytes = ArrayBuffer.isView(chunk) ? new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength) : new Uint8Array(chunk);
             const binaryFrame = new Uint8Array(2 + rawBytes.byteLength);
             binaryFrame[0] = speakerHint === 'microphone' ? 0x01 : 0x02;
             binaryFrame[1] = is_muted ? 0x01 : 0x00;
             binaryFrame.set(rawBytes, 2);
-            this.socket.send(binaryFrame.buffer);
+            this.audioBuffer.push({ at: Date.now(), frame: binaryFrame.buffer });
+            let bytes = this.audioBuffer.reduce((sum, item) => sum + item.frame.byteLength, 0);
+            let dropped = false;
+            while (this.audioBuffer.length && (bytes > 384000 || Date.now() - this.audioBuffer[0].at > 4000)) {
+                bytes -= this.audioBuffer.shift().frame.byteLength;
+                dropped = true;
+            }
+            if (dropped && Date.now() - this.lastAudioGapWarning > 10000) {
+                this.lastAudioGapWarning = Date.now();
+                this.updateAudioHealth('Browser audio', { status: 'gap', detail: 'Connection stalled; oldest audio was dropped after the bounded buffer filled.' });
+            }
+            this.flushAudioBuffer();
+        }
+    }
+
+    flushAudioBuffer() {
+        while (this.audioBuffer.length && this.audioSessionReady && this.socket?.readyState === WebSocket.OPEN && this.socket.bufferedAmount < 384000) {
+            const item = this.audioBuffer[0];
+            if (Date.now() - item.at > 4000 || window.muteManager?.isAudioPaused()) {
+                this.audioBuffer.shift();
+                continue;
+            }
+            if (new Uint8Array(item.frame)[0] === 1 && window.muteManager?.isMicrophoneMuted()) {
+                this.audioBuffer.shift();
+                continue;
+            }
+            try { this.socket.send(item.frame); }
+            catch (error) { break; }
+            this.audioBuffer.shift();
+        }
+    }
+
+    updateAudioHealth(source, payload) {
+        this.audioHealth[source] = payload.status;
+        const health = document.getElementById('audio-health');
+        if (health) {
+            health.hidden = false;
+            health.textContent = Object.entries(this.audioHealth).map(([name, status]) => `${name}: ${status}`).join(' · ');
+        }
+        if (['failed', 'gap', 'reconnecting'].includes(payload.status)) {
+            liveInterviewUI.addMessage(`${source}: ${payload.detail || payload.status}`, 'system-error');
         }
     }
 
@@ -427,11 +498,13 @@ export class WebSocketHandler {
         return btoa(binary);
     }
 
-    startInterview() {
+    async startInterview() {
         const state = this.stateManager.getState();
         const initialMuteStatus = window.muteManager?.getMuteStatus() || { microphone: false, universal: false };
         
         const interviewPayload = {
+            audioCaptureMode: document.getElementById('audio-capture-mode')?.value || 'browser',
+            audioOutput: document.getElementById('audio-output-select')?.value || '',
             sttLanguage: state.sttLanguage || 'en', // P1: transcription language
             aiProvider: {
                 provider: state.selectedProvider.name,
@@ -440,7 +513,7 @@ export class WebSocketHandler {
             onboardingData: { ...state.onboardingData, selectedLanguages: state.selectedLanguages },
             is_muted: initialMuteStatus.microphone,
             is_universally_muted: initialMuteStatus.universal,
-            process_all_speakers: true,
+            process_all_speakers: document.getElementById('audio-capture-mode')?.value !== 'native',
             aiSecondaryProvider: state.selectedSecondaryProvider.name ? {
                 provider: state.selectedSecondaryProvider.name,
                 model: state.selectedSecondaryProvider.model
@@ -454,7 +527,14 @@ export class WebSocketHandler {
                 model: state.selectedSecondaryVisionProvider.model
             } : null,
         };
+        this.audioHealth = {};
+        const started = new Promise((resolve, reject) => {
+            this.pendingStart = { resolve, reject };
+        });
+        const timeout = setTimeout(() => this.pendingStart?.reject(new Error('Audio and transcription startup timed out')), 45000);
         this.sendMessage('start_interview', interviewPayload);
+        try { return await started; }
+        finally { clearTimeout(timeout); this.pendingStart = null; }
     }
 
     endInterview() {
@@ -463,7 +543,7 @@ export class WebSocketHandler {
     }
 
     /**
-     * P4: live toggle between full answers and quick hints (Alt+G).
+     * P4: live toggle between full answers and quick hints (Ctrl+Shift+Win+G).
      * Sends the new mode to the session; the backend prefixes the next prompt
      * accordingly. Returns the mode that was just activated.
      */

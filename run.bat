@@ -2,43 +2,45 @@
 setlocal enabledelayedexpansion
 chcp 65001 >nul
 set "PYTHONUTF8=1"
+set "PYTHONUNBUFFERED=1"
+cd /d "%~dp0" || exit /b 1
+set "APP_PYTHON=%~dp0venv\Scripts\python.exe"
+if not exist "%APP_PYTHON%" set "APP_PYTHON=python"
 
 :: ====================================================
-:: SuperAssist Application Launcher
+:: VeyraCue Application Launcher
 :: ====================================================
 :: This batch file will:
 :: 1. Check if Python is installed
 :: 2. Create a virtual environment if needed
 :: 3. Install dependencies from requirements.txt
-:: 4. Launch the SuperAssist application
+:: 4. Launch the VeyraCue application
 :: ====================================================
 
 echo.
 echo ====================================================
-echo        SUPERASSIST APPLICATION LAUNCHER
+echo        VEYRACUE DESKTOP LAUNCHER
 echo ====================================================
 echo.
 
 :: Check if Python is installed
 echo [1/5] Checking Python installation...
-python --version >nul 2>&1
+"%APP_PYTHON%" --version >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Python is not installed or not in PATH!
-    echo Please install Python 3.7+ from https://python.org
+    echo Please install Python 3.10+ from https://python.org
     echo Make sure to check "Add Python to PATH" during installation
     exit /b 1
 )
 
-:: Get Python version for display
-for /f "tokens=2" %%i in ('python --version 2^>^&1') do set PYTHON_VERSION=%%i
-echo    Found Python %PYTHON_VERSION%
+"%APP_PYTHON%" --version
 echo.
 
 :: Check if virtual environment exists
 echo [2/5] Checking virtual environment...
 if not exist "venv\" (
     echo    Virtual environment not found, creating one...
-    python -m venv venv
+    "%APP_PYTHON%" -m venv venv
     if errorlevel 1 (
         echo ERROR: Failed to create virtual environment!
         echo Make sure you have the 'venv' module available
@@ -66,7 +68,7 @@ if "%1"=="--update" goto INSTALL_DEPS
 if "%1"=="--install" goto INSTALL_DEPS
 if not exist "venv\Lib\site-packages\fastapi\" goto INSTALL_DEPS
 if not exist "venv\Lib\site-packages\aiofiles\" goto INSTALL_DEPS
-python -c "import aiofiles, fastapi, webview" >nul 2>&1
+python -c "import aiofiles, fastapi, webview, pyaudiowpatch" >nul 2>&1
 if errorlevel 1 goto INSTALL_DEPS
 
 echo    Fast boot: Core dependencies verified. Skipping slow pip check.
@@ -101,7 +103,7 @@ if not exist ".env" (
 )
 
 :: Launch the application
-echo [5/5] Starting SuperAssist application...
+echo [5/5] Starting VeyraCue desktop assistant...
 echo    Launching main.py...
 echo.
 echo ====================================================
@@ -111,7 +113,12 @@ echo.
 echo Press Ctrl+C to stop the application
 echo.
 
-python main.py
+if "%~1"=="--silent" (
+    python main.py >nul
+) else (
+    python main.py
+)
+set "APP_EXIT_CODE=!errorlevel!"
 
 :: Handle application exit
 echo.
@@ -121,11 +128,12 @@ echo ====================================================
 echo.
 
 :: Check exit code
-if errorlevel 1 (
-    echo Application exited with an error code: %errorlevel%
+if not "%APP_EXIT_CODE%"=="0" (
+    echo Application exited with an error code: %APP_EXIT_CODE%
     echo Check the output above for error details
 ) else (
     echo Application exited normally
 )
 
 echo.
+exit /b %APP_EXIT_CODE%

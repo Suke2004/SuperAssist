@@ -11,7 +11,7 @@ import time
 import tkinter as tk
 import platform
 from typing import Optional
-from threading import Thread
+from threading import Thread, Event
 from pynput import keyboard
 from core.config import settings
 
@@ -246,6 +246,7 @@ class WindowManager:
         self.scrolling_down = False
         self.scroll_thread = None
         self.hotkey_listener = None
+        self._hotkey_stop = Event()
         self.release_listener = None
         self.command_callback = None
         self.alt_pressed = False
@@ -800,7 +801,7 @@ class WindowManager:
         """Toggles the ghost mode on or off."""
         self.set_ghost_mode(not self.is_ghost_mode)
 
-    def enable_proctoring_stealth_mode(self):
+    def enable_proctoring_stealth_mode(self, click_through=True):
         """
         Enable complete stealth mode for proctoring environments.
         
@@ -826,7 +827,7 @@ class WindowManager:
             print("🎯 Enabling PROCTORING STEALTH MODE...")
             
             # 1. Enable ghost mode (click-through)
-            self.set_ghost_mode(True)
+            self.set_ghost_mode(click_through)
             
             # 2. Hide from taskbar / Dock
             self.hide_from_taskbar()
@@ -839,9 +840,9 @@ class WindowManager:
             
             print("✅ PROCTORING STEALTH MODE ENABLED")
             print("   🚨 IMPORTANT: Use ONLY global hotkeys to interact:")
-            print("   📌 Alt/Option+H: Toggle visibility (no focus change)")
-            print("   📌 Alt/Option+X: Toggle ghost mode")
-            print("   📌 Alt/Option+1/2/3: Adjust transparency")
+            print("   📌 Ctrl+Shift+Win+H (Mac Option+H): Toggle visibility (no focus change)")
+            print("   📌 Ctrl+Shift+Win+K (Mac Option+X): Toggle ghost mode")
+            print("   📌 Ctrl+Shift+Win+F1/F2/F3 (Mac Option+1/2/3): Adjust transparency")
             print("   📌 DO NOT click on the window - it will trigger focus detection!")
             
             return True
@@ -1141,7 +1142,27 @@ class WindowManager:
             self.release_listener.start()
             self.release_listener.join()
 
-        # Start the release listener in background
+        if self.is_windows:
+            self._run_windows_hotkeys({
+                ord('H'): on_hide_show, ord('K'): on_toggle_ghost,
+                ord('V'): on_toggle_vision_mode, ord('S'): on_capture_screenshot,
+                ord('P'): on_process_screenshots, ord('R'): on_reset_screenshot_queue,
+                ord('Q'): on_switch_primary, ord('W'): on_switch_secondary,
+                ord('E'): on_auto_select, ord('T'): on_switch_vision_model,
+                ord('M'): on_toggle_mic_mute, ord('U'): on_toggle_universal_mute,
+                0x70: on_transparency_transparent, 0x71: on_transparency_semi,
+                0x72: on_transparency_opaque, ord('Y'): on_enable_proctoring_stealth,
+                ord('O'): on_reset_interview,
+                0x25: on_move_left, 0x27: on_move_right,
+                0x26: on_move_up, 0x28: on_move_down,
+                0x21: on_scroll_up_start, 0x22: on_scroll_down_start,
+                ord('G'): lambda: self.send_audio_command('toggle_answer_mode'),
+                0xDB: lambda: self.send_audio_command('decrease_transparency'),
+                0xDD: lambda: self.send_audio_command('increase_transparency'),
+            })
+            return
+
+        # macOS keeps its existing Option shortcuts.
         release_thread = Thread(target=start_release_listener, daemon=True)
         release_thread.start()
 
@@ -1183,6 +1204,37 @@ class WindowManager:
         self.hotkey_listener = keyboard.GlobalHotKeys(hotkey_map)
         self.hotkey_listener.start()
         self.hotkey_listener.join()
+
+    def _run_windows_hotkeys(self, bindings):
+        """Register exact chords; occupied shortcuts stay with their current owner."""
+        modifiers = 0x0002 | 0x0004 | 0x0008  # Ctrl + Shift + Win, without Alt.
+        registered = {}
+        message = wintypes.MSG()
+        try:
+            for hotkey_id, (key, callback) in enumerate(bindings.items(), 1):
+                if _user32.RegisterHotKey(None, hotkey_id, modifiers | 0x4000, key):
+                    registered[hotkey_id] = callback
+                else:
+                    print(f'VeyraCue shortcut unavailable: Ctrl+Shift+Win+VK {key:#x}; leaving it unbound.')
+            while not self._hotkey_stop.is_set():
+                while _user32.PeekMessageW(ctypes.byref(message), None, 0x0312, 0x0312, 1):
+                    callback = registered.get(message.wParam)
+                    if callback:
+                        try:
+                            callback()
+                        except Exception as error:
+                            print(f'VeyraCue shortcut failed: {error}')
+                held = all(_user32.GetAsyncKeyState(key) & 0x8000 for key in (0x11, 0x10)) and (
+                    _user32.GetAsyncKeyState(0x5B) & 0x8000 or _user32.GetAsyncKeyState(0x5C) & 0x8000)
+                if not held or not _user32.GetAsyncKeyState(0x21) & 0x8000:
+                    self.scrolling_up = False
+                if not held or not _user32.GetAsyncKeyState(0x22) & 0x8000:
+                    self.scrolling_down = False
+                self._hotkey_stop.wait(0.01)
+        finally:
+            for hotkey_id in registered:
+                _user32.UnregisterHotKey(None, hotkey_id)
+            self.scrolling_up = self.scrolling_down = False
 
     def send_preset_switch_signal(self, preset_key: str):
         """Send preset switch signal to the application"""
@@ -1344,6 +1396,7 @@ class WindowManager:
 
     def stop_hotkey_listener(self):
         """Cleanly stops the global hotkey listeners on application exit."""
+        self._hotkey_stop.set()
         if getattr(self, 'hotkey_listener', None):
             try:
                 self.hotkey_listener.stop()
@@ -1366,34 +1419,16 @@ class WindowManager:
             print("Global hotkeys not supported on this platform.")
             return
 
+        self._hotkey_stop.clear()
+
         print("🚀 Initializing global hotkey listener...")
-        print("   Alt/Option+X: Toggle ghost mode (click-through)")
-        print("   Alt/Option+H: Toggle window visibility (stealth - no focus)")
-        print("   Alt/Option+,: Continuous scroll up (hold for continuous)")
-        print("   Alt/Option+.: Continuous scroll down (hold for continuous)")
-        print("   Alt/Option+Shift+,: Move window left (stealth - no focus)")
-        print("   Alt/Option+Shift+.: Move window right (stealth - no focus)")
-        print("   Alt/Option+Shift+U: Move window up (stealth - no focus)")
-        print("   Alt/Option+Shift+D: Move window down (stealth - no focus)")
-        print("   Alt/Option+V: Toggle vision mode")
-        print("   Alt/Option+S: Capture screenshot")
-        print("   Alt/Option+P: Process screenshots with AI")
-        print("   Alt/Option+R: Reset screenshot queue")
-        print("   Alt/Option+O: Reset interview session")
-        print("   Alt/Option+Q: Switch to primary AI preset")
-        print("   Alt/Option+W: Switch to secondary AI preset")
-        print("   Alt/Option+E: Auto-select best AI preset")
-        print("   Alt/Option+T: Switch vision model")
-        print("   Alt/Option+M: Toggle microphone mute")
-        print("   Alt/Option+U: Toggle universal mute (pause)")
-        print("   Alt/Option+1: Set transparent (40% opacity)")
-        print("   Alt/Option+2: Set semi-transparent (70% opacity)")
-        print("   Alt/Option+3: Set opaque (100% opacity)")
-        print("   Alt/Option+Shift+S: Enable proctoring stealth mode")
-        
+        if self.is_windows:
+            print('   Windows: Ctrl+Shift+Win+key; H hide/show, M mic, U pause, arrows move, PageUp/PageDown scroll.')
+        else:
+            print('   macOS: existing Option shortcuts.')
         # Ensure we have the handle before starting
         if not self.hwnd and not self.native_window:
-            expected_title = os.getenv("WINDOW_TITLE", "Activity Monitor" if self.is_macos else "Host Process for Windows Services")
+            expected_title = os.getenv("WINDOW_TITLE", "VeyraCue")
             if not (self.find_window_by_title(expected_title) or self.find_window_by_title("SuperAssist") or self.find_window_by_title("Aura")):
                  print("❌ Cannot start hotkey listener: Application window not found.")
                  return
@@ -1430,10 +1465,10 @@ def find_aura_window() -> bool:
     if IS_MACOS:
         if window_manager.native_window is not None:
             return True
-        expected_title = os.getenv("WINDOW_TITLE", "Activity Monitor")
+        expected_title = os.getenv("WINDOW_TITLE", "VeyraCue")
         return bool(window_manager.find_window_by_title(expected_title) or window_manager.find_window_by_title("SuperAssist") or window_manager.find_window_by_title("Aura"))
 
-    expected_title = os.getenv("WINDOW_TITLE", "Host Process for Windows Services")
+    expected_title = os.getenv("WINDOW_TITLE", "VeyraCue")
     hwnd = window_manager.find_window_by_title(expected_title) or window_manager.find_window_by_title("SuperAssist") or window_manager.find_window_by_title("Aura")
     return hwnd is not None
 
@@ -1516,7 +1551,7 @@ def _get_macos_nswindow(window):
         from AppKit import NSApplication
         app = NSApplication.sharedApplication()
         windows = app.windows()
-        expected_title = os.getenv("WINDOW_TITLE", "Activity Monitor")
+        expected_title = os.getenv("WINDOW_TITLE", "VeyraCue")
         for win in windows:
             title = str(win.title()) if hasattr(win, 'title') else ""
             if title in (expected_title, getattr(window, 'title', ''), "SuperAssist", "Aura"):
@@ -1601,7 +1636,7 @@ def apply_capture_protection(window):
     # --- Method 3: Try multiple search attempts with delay ---
     if not hwnd:
         print("⚠️ Trying multiple search attempts...")
-        expected_title = os.getenv("WINDOW_TITLE", "Host Process for Windows Services")
+        expected_title = os.getenv("WINDOW_TITLE", "VeyraCue")
         for attempt in range(5):
             time.sleep(0.05)
             hwnd = _user32.FindWindowW(None, expected_title) or _user32.FindWindowW(None, "SuperAssist") or _user32.FindWindowW(None, "Aura")

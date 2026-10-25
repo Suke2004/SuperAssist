@@ -52,6 +52,7 @@ class PersistentContextManager:
             'complete_job_description': onboarding_data.get('objectives', ''),  # FULL CONTENT
             'focus_areas': onboarding_data.get('focus', []),
             'selected_languages': languages,
+            'custom_instructions': onboarding_data.get('instructions', ''),
             'created_at': datetime.now().isoformat()
         })
         self.is_initialized = True

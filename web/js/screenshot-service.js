@@ -329,7 +329,7 @@ class ScreenshotService {
      * @param {number} [maxImages] Images this vision model accepts in one
      *   request. Providers differ: Cerebras gemma-4-31b rejects a third image
      *   with HTTP 413, while Gemini handles four. Without this the queue would
-     *   happily fill to 4 and then fail the whole batch at Alt+P.
+     *   happily fill to 4 and then fail the whole batch at Ctrl+Shift+Win+P.
      */
     setVisionConfig(visionProvider, visionModel, maxImages) {
         this.visionConfig = {
@@ -341,7 +341,7 @@ class ScreenshotService {
         if (cap !== this.maxScreenshots) {
             this.maxScreenshots = cap;
             console.log(`🔧 Screenshot queue cap set to ${cap} for ${visionProvider} ${visionModel}`);
-            // Drop anything already queued beyond the new cap so Alt+P cannot
+            // Drop anything already queued beyond the new cap so Ctrl+Shift+Win+P cannot
             // send a batch this model will reject.
             if (this.screenshotQueue.length > cap) {
                 const dropped = this.screenshotQueue.length - cap;
@@ -472,7 +472,7 @@ class ScreenshotService {
             };
             
             this.addToQueue(screenshot);
-            this.showNotification('📸 Screenshot Captured (Global)', `Added to queue (${this.screenshotQueue.length}/${this.maxScreenshots}) - Alt+P to process`, 'success');
+            this.showNotification('📸 Screenshot Captured (Global)', `Added to queue (${this.screenshotQueue.length}/${this.maxScreenshots}) - Ctrl+Shift+Win+P to process`, 'success');
             
             return true;
             
@@ -709,19 +709,19 @@ class ScreenshotService {
                 <p>Ready to capture and analyze screenshots anywhere!</p>
                 <div class="vision-hotkeys">
                     <div class="vision-hotkey">
-                        <kbd>Alt/⌥+S</kbd>
+                        <kbd>Ctrl+Shift+Win+S</kbd>
                         <span>Capture</span>
                     </div>
                     <div class="vision-hotkey">
-                        <kbd>Alt/⌥+P</kbd>
+                        <kbd>Ctrl+Shift+Win+P</kbd>
                         <span>Process</span>
                     </div>
                     <div class="vision-hotkey">
-                        <kbd>Alt/⌥+T</kbd>
+                        <kbd>Ctrl+Shift+Win+T</kbd>
                         <span>Switch Model</span>
                     </div>
                     <div class="vision-hotkey">
-                        <kbd>Alt/⌥+V</kbd>
+                        <kbd>Ctrl+Shift+Win+V</kbd>
                         <span>Exit Vision</span>
                     </div>
                 </div>

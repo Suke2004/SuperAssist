@@ -1,11 +1,11 @@
 {
   "version": "1.1.0",
-  "uptime_s": 396.3,
+  "uptime_s": 377.2,
   "counters": {
     "sessions_created": 0,
-    "ws_disconnects": 48,
+    "ws_disconnects": 50,
     "ws_origins_rejected": 0,
-    "questions_answered": 136,
+    "questions_answered": 145,
     "answers_streamed": 0,
     "fallbacks_used": 67,
     "key_rotations": 0,
@@ -13,7 +13,7 @@
     "deepgram_reconnects": 0,
     "deepgram_connect_failures": 0,
     "delayed_cleanups": 4,
-    "transcripts_exported": 0,
+    "transcripts_exported": 1,
     "answer_mode_hints": 0,
     "answer_mode_full": 0,
     "hint_answers": 0,
@@ -23,8 +23,8 @@
   "provider_errors": {},
   "answer_latency_ms": {
     "count": 8,
-    "p50": 9383.222100001149,
-    "p95": 16361.179699999411,
-    "max": 16361.179699999411
+    "p50": 1746.4874999932363,
+    "p95": 8510.553399995842,
+    "max": 8510.553399995842
   }
 }
