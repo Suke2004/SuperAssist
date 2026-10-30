@@ -86,17 +86,18 @@ class DesktopAPI:
                     subprocess.run(['/usr/sbin/screencapture', '-x', '-m', '-t', 'png', str(path)],
                                    check=True, timeout=10, capture_output=True)
                     data = path.read_bytes()
-            elif sys.platform == 'linux':
+            elif sys.platform in ('win32', 'linux'):
                 import os
-                if os.environ.get('XDG_SESSION_TYPE') == 'wayland':
+                if sys.platform == 'linux' and os.environ.get('XDG_SESSION_TYPE') == 'wayland':
                     return {'upload_required': True}
                 import mss
                 import mss.tools
                 with mss.mss() as capture:
                     image = capture.grab(capture.monitors[1])
-                    data = mss.tools.to_png(image.rgb, image.size)
+                    # The browser encodes the final JPEG; keep this lossless intermediate fast.
+                    data = mss.tools.to_png(image.rgb, image.size, level=1)
             else:
-                raise RuntimeError('Use browser screen capture on Windows.')
+                raise RuntimeError('Native screen capture is unavailable on this platform.')
             return {'data_url': 'data:image/png;base64,' + base64.b64encode(data).decode('ascii')}
         except Exception as error:
             return {'error': str(error)}
@@ -112,7 +113,9 @@ class DesktopAPI:
 
     def capabilities(self):
         import window_manager
-        return {'platform': sys.platform, 'global_hotkeys': window_manager.window_manager.global_hotkeys_active}
+        manager = window_manager.window_manager
+        return {'platform': sys.platform, 'global_hotkeys': manager.global_hotkeys_active,
+                'registered_hotkeys': sorted(manager.registered_hotkeys)}
 
     def stop_scrolling(self):
         import window_manager

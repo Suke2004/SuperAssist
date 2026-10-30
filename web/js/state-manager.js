@@ -31,9 +31,7 @@ export class StateManager {
                 isActive: false,
                 screenshotQueue: [],
                 maxScreenshots: 4,
-                currentVisionProvider: 'primary',
-                lastSwitchTime: 0,
-                switchCooldown: 1000
+                currentVisionProvider: 'primary'
             }
         };
         
@@ -41,9 +39,7 @@ export class StateManager {
         this.onboardingForm = {};
         this.initializeFormElements();
 
-        // Vision mode debouncing
-        this.lastVisionToggleTime = 0;
-        this.visionToggleCooldown = 500;
+        // Screenshot debouncing
         this.lastScreenshotTime = 0;
         this.screenshotCooldown = 300;
     }
@@ -205,14 +201,6 @@ export class StateManager {
     toggleVisionMode() {
         console.log('🎮 toggleVisionMode called (could be from global hotkey)');
         
-        // Debounce rapid calls
-        const now = Date.now();
-        if (now - this.lastVisionToggleTime < this.visionToggleCooldown) {
-            console.log('🎮 Ignoring rapid vision mode toggle (debounced)');
-            return false;
-        }
-        this.lastVisionToggleTime = now;
-        
         if (!this.isLiveInterviewActive()) {
             console.warn('⚠️ Vision mode only available during live interview');
             if (window.presetManager) {
@@ -240,21 +228,13 @@ export class StateManager {
             screenshotService.setProgrammingLanguages(this.appState.selectedLanguages);
             screenshotService.showVisionMode(true);
             
-            if (window.muteManager) {
-                muteManager.setUniversalMute(true);
-            }
-            
             devLog('👁️ Vision mode activated (global hotkey)');
-            console.log('👁️ Vision mode activated - Audio processing paused');
+            console.log('👁️ Vision mode activated');
         } else {
             screenshotService.showVisionMode(false);
             
-            if (window.muteManager) {
-                muteManager.setUniversalMute(false);
-            }
-            
             devLog('👁️ Vision mode deactivated (global hotkey)');
-            console.log('👁️ Vision mode deactivated - Audio processing resumed');
+            console.log('👁️ Vision mode deactivated');
         }
         
         return this.appState.visionMode.isActive;
@@ -277,20 +257,12 @@ export class StateManager {
             return false;
         }
 
-        const now = Date.now();
-        if (now - this.appState.visionMode.lastSwitchTime < this.appState.visionMode.switchCooldown) {
-            devLog('🔄 Vision model switch cooldown active, ignoring.');
-            return false;
-        }
-
         if (!this.appState.selectedSecondaryVisionProvider || !this.appState.selectedSecondaryVisionProvider.name || !this.appState.selectedSecondaryVisionProvider.model) {
             const msg = 'No secondary vision model configured.';
             devWarn(msg, 'Please select one in the onboarding screen.');
             if (window.presetManager) presetManager.showErrorNotification(msg, 'Please select one on the onboarding screen.');
             return false;
         }
-
-        this.appState.visionMode.lastSwitchTime = now;
 
         const wasOnPrimary = this.appState.visionMode.currentVisionProvider === 'primary';
         this.appState.visionMode.currentVisionProvider = wasOnPrimary ? 'secondary' : 'primary';
@@ -332,13 +304,7 @@ export class StateManager {
             return false;
         }
         
-        if (!this.appState.visionMode.isActive) {
-            console.warn('⚠️ Screenshots can only be taken in vision mode - use Ctrl+Shift+Win+V to enter vision mode first');
-            if (window.presetManager) {
-                presetManager.showErrorNotification('Enter vision mode first (Ctrl+Shift+Win+V) before taking screenshots');
-            }
-            return false;
-        }
+        if (!this.appState.visionMode.isActive && !this.toggleVisionMode()) return false;
         
         console.log('📸 Taking screenshot via global hotkey');
         return await screenshotService.captureScreenshot();
@@ -478,9 +444,7 @@ export class StateManager {
             isActive: false,
             screenshotQueue: [],
             maxScreenshots: 4,
-            currentVisionProvider: 'primary',
-            lastSwitchTime: 0,
-            switchCooldown: 1000
+            currentVisionProvider: 'primary'
         };
 
         // Clear preset and system status
@@ -488,7 +452,6 @@ export class StateManager {
         this.appState.systemStatus = null;
 
         // Reset timers and debouncing
-        this.lastVisionToggleTime = 0;
         this.lastScreenshotTime = 0;
 
         // Clear screenshot service

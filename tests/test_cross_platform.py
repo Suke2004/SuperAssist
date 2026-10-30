@@ -229,6 +229,29 @@ def test_wayland_screenshot_uses_explicit_upload(monkeypatch):
     assert desktop.DesktopAPI().capture_screenshot() == {'upload_required': True}
 
 
+@pytest.mark.parametrize('platform', ['win32', 'linux'])
+def test_native_screenshot_captures_primary_monitor_without_viewer_or_file(monkeypatch, platform):
+    monkeypatch.setattr(desktop.DesktopAPI, '_is_local', lambda self: True)
+    monkeypatch.setattr(desktop, 'sys', SimpleNamespace(platform=platform))
+    monkeypatch.setenv('XDG_SESSION_TYPE', 'x11')
+    mss = MagicMock()
+    capture = mss.mss.return_value.__enter__.return_value
+    capture.monitors = ['all', 'primary']
+    capture.grab.return_value = SimpleNamespace(rgb=b'pixels', size=(1920, 1080))
+    mss.tools.to_png.return_value = b'png-data'
+    monkeypatch.setitem(sys.modules, 'mss', mss)
+    monkeypatch.setitem(sys.modules, 'mss.tools', mss.tools)
+    launch = MagicMock()
+    monkeypatch.setattr(desktop.subprocess, 'run', launch)
+    result = desktop.DesktopAPI().capture_screenshot()
+    assert base64.b64decode(result['data_url'].split(',')[1]) == b'png-data'
+    capture.grab.assert_called_once_with('primary')
+    mss.tools.to_png.assert_called_once_with(b'pixels', (1920, 1080), level=1)
+    launch.assert_not_called()
+    capture.grab.side_effect = RuntimeError('capture unavailable')
+    assert desktop.DesktopAPI().capture_screenshot() == {'error': 'capture unavailable'}
+
+
 def test_native_bridge_rejects_remote_pages_and_unbound_calls():
     api = desktop.DesktopAPI()
     assert not api.shortcut(ord('O'))

@@ -6,11 +6,12 @@ async (page) => {
             value: new URL(location.href).searchParams.get('platform') || 'Win32' });
     });
     const passed = [];
-    for (const platform of ['MacIntel', 'Linux x86_64']) {
+    for (const platform of ['Win32', 'MacIntel', 'Linux x86_64']) {
         const mac = platform === 'MacIntel';
+        const linux = platform.startsWith('Linux');
         await page.route('**/api/audio-outputs', route => route.fulfill({ json: {
-            available: true, native_microphone: true, platform: mac ? 'darwin' : 'linux',
-            label: mac ? 'macOS routed audio' : 'Linux system audio', default: 'Meeting output',
+            available: true, native_microphone: true, platform: mac ? 'darwin' : linux ? 'linux' : 'win32',
+            label: mac ? 'macOS routed audio' : linux ? 'Linux system audio' : 'Windows direct audio', default: 'Meeting output',
             devices: [{ id: 'meeting-output', name: 'Meeting output' }],
             microphones: [{ id: 'physical-mic', name: 'Physical microphone' }]
         } }));
@@ -50,13 +51,15 @@ async (page) => {
         });
         await page.getByRole('button', { name: 'Continue to audio setup' }).click();
         await page.waitForFunction(() => window.testConnected && !document.getElementById('start-interview-button').disabled);
-        await page.evaluate(async mac => {
+        await page.evaluate(async ({ mac, linux }) => {
             const { startInterview } = await import('/static/js/main.js');
             const { default: hotkeys } = await import('/static/js/hotkeys.js');
+            window.wsHandler.answerModeFull = false;
             await startInterview();
+            if (window.wsHandler.answerModeFull !== true) throw new Error('New interview keeps the previous answer mode');
             if (!window.testStartupPayload.microphoneAvailable || window.testStartupPayload.audioInput !== 'physical-mic') throw new Error('Native microphone selection disconnected');
             if (window.testStartupPayload.audioCaptureMode !== 'native') throw new Error('Native output startup disconnected');
-            if (!document.getElementById('pause-btn').title.includes(mac ? 'Option+U' : 'Ctrl+Shift+Super+U')) throw new Error('Platform shortcut hint incorrect');
+            if (!document.getElementById('pause-btn').title.includes(mac ? 'Option+U' : linux ? 'Ctrl+Shift+Super+U' : 'Ctrl+Shift+Win+U')) throw new Error('Platform shortcut hint incorrect');
             hotkeys.setEnabled(true);
             const options = mac ? { altKey: true, key: '©', code: 'KeyG' }
                 : { ctrlKey: true, shiftKey: true, metaKey: true, key: 'g', code: 'KeyG' };
@@ -71,7 +74,7 @@ async (page) => {
             const image = await createImageBitmap(queued.blob);
             if (image.width !== 2560 || image.height !== 1280) throw new Error('Native screenshot size cap lost');
             image.close();
-        }, mac);
+        }, { mac, linux });
         passed.push(`${platform}: native audio/microphone, shortcuts, screenshots`);
         await page.unroute('**/api/audio-outputs');
     }

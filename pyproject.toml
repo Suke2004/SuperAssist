@@ -9,7 +9,7 @@ dependencies = [
     "deepgram-sdk==3.*",
     "fastapi>=0.110",
     "httpx>=0.27",
-    "mss>=10,<11 ; sys_platform == 'linux'",
+    "mss>=10,<11 ; sys_platform == 'linux' or sys_platform == 'win32'",
     "openai>=1.30",
     "orjson>=3.10",
     "pyaudiowpatch>=0.2.12.7,<0.3 ; sys_platform == 'win32'",

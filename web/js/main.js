@@ -13,7 +13,7 @@ import muteManager from './mute-manager.js';
 import { autofillForTesting } from './dev.js';
 import { loadConfig, isDev, devLog, devWarn, devError, applyConsoleGate } from './config.js';
 import liveInterviewUI from './live-interview.js';
-import hotkeyManager, { isAppShortcut } from './hotkeys.js';
+import hotkeyManager from './hotkeys.js';
 import presetManager from './preset-manager.js';
 import screenshotService from './screenshot-service.js';
 import { ConfigManager } from './config-manager.js';
@@ -481,9 +481,7 @@ function setupEventListeners() {
         catch (error) { liveInterviewUI.addMessage('Could not save the transcript. Try again before ending the session.', 'system-error'); }
     });
     document.getElementById('screenshot-btn').addEventListener('click', async () => {
-        if (!stateManager.appState.visionMode.isActive && !stateManager.toggleVisionMode()) return;
-        const captured = await captureScreenshot();
-        if (captured) await processScreenshots();
+        await captureScreenshot();
     });
     document.getElementById('transcript-stream').addEventListener('scroll', event => {
         const stream = event.currentTarget;
@@ -579,7 +577,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     liveInterviewUI.init();
     setupEventListeners();
     setupDeveloperShortcuts();
-    setupPresetHotkeys();
     setupTabs();
     hotkeyManager.setEnabled(false);
     switchView('onboarding');
@@ -588,15 +585,17 @@ window.addEventListener('DOMContentLoaded', async () => {
 window.addEventListener('pywebviewready', async () => {
     const info = await window.pywebview.api.capabilities();
     window.__nativeHotkeys = info.global_hotkeys;
+    window.__nativeHotkeyCodes = info.registered_hotkeys;
 });
 
 // --- Developer Shortcuts ---
 function setupDeveloperShortcuts() {
+    if (!isDev()) return;
 
     devLog('🛠️ Developer shortcuts enabled');
 
     // Console helper functions
-    if (isDev) {
+    if (isDev()) {
         console.log(`
 🧪 === AURA DEVELOPER TOOLS ===
 Available testing functions:
@@ -631,54 +630,6 @@ Try: testSampleMarkdown()
             e.preventDefault();
             devLog('🛠️ Auto-filling form via Ctrl+J');
             autofillForTesting();
-        }
-    });
-}
-
-function setupPresetHotkeys() {
-    devLog('🎹 Setting up preset switching and vision hotkeys');
-    document.addEventListener('keydown', (e) => {
-        // Only work during live interview and if not focusing on input fields
-        if (!e.target.matches('input, textarea, select') && stateManager.isLiveInterviewActive()) {
-            if (isAppShortcut(e) && !e.repeat) {
-                switch (e.key.toLowerCase()) {
-                    case 'q':
-                        e.preventDefault();
-                        switchPreset('primary');
-                        devLog('🔄 Hotkey: Switching to primary preset');
-                        break;
-                    case 'w':
-                        e.preventDefault();
-                        switchPreset('secondary');
-                        devLog('🔄 Hotkey: Switching to secondary preset');
-                        break;
-                    case 'e':
-                        e.preventDefault();
-                        switchPreset('auto');
-                        devLog('🔄 Hotkey: Auto-selecting best preset');
-                        break;
-                    case 't':
-                        e.preventDefault();
-                        switchVisionModel();
-                        devLog('🔄 Hotkey: Switching vision model');
-                        break;
-                    case 'v':
-                        e.preventDefault();
-                        toggleVisionMode();
-                        devLog('👁️ Hotkey: Toggling vision mode');
-                        break;
-                    case 's':
-                        e.preventDefault();
-                        captureScreenshot();
-                        devLog('📸 Hotkey: Capturing screenshot');
-                        break;
-                    case 'p':
-                        e.preventDefault();
-                        processScreenshots();
-                        devLog('🔄 Hotkey: Processing screenshots');
-                        break;
-                }
-            }
         }
     });
 }

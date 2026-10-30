@@ -6,6 +6,7 @@ async (page) => {
     const result = await page.evaluate(async () => {
         const { default: hotkeys, isAppShortcut } = await import('/static/js/hotkeys.js');
         const { switchView } = await import('/static/js/main.js');
+        const { isDev } = await import('/static/js/config.js');
         switchView('live');
         hotkeys.setEnabled(true);
         const calls = [];
@@ -19,6 +20,7 @@ async (page) => {
         for (const key of ['h', 'u', 'v', 's', 'g', '[']) {
             if (dispatch({ key, altKey: true })) throw new Error(`Old meeting Alt+${key} intercepted`);
         }
+        if (!isDev() && dispatch({ key: 'j', ctrlKey: true })) throw new Error('Developer shortcut active in production');
         if (dispatch({ key: 'g', ctrlKey: true, shiftKey: true })) throw new Error('Ordinary Ctrl+Shift key intercepted');
         if (calls.length) throw new Error('Legacy shortcut still triggered an app action');
         const modifiers = { ctrlKey: true, shiftKey: true, metaKey: true };

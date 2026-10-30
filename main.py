@@ -94,10 +94,6 @@ class GlobalCommandMonitor:
         self.last_command_time = 0
         self.running = False
         self.websocket_manager = None
-        self.startup_time = time.time()
-        self.startup_delay = 5  # Ignore commands for first 5 seconds after startup
-        self.last_processed_command = None
-        self.command_cooldown = 0.5  # 500ms cooldown between same commands
         self._monitor_task = None
         
     def set_websocket_manager(self, ws_manager):
@@ -126,34 +122,10 @@ class GlobalCommandMonitor:
         """Process a command from the global hotkey"""
         command = command_data.get('command', '')
         source = command_data.get('source', '')
-        timestamp_str = command_data.get('timestamp', '')
         
         if source != 'global_hotkey':
             return False  # Only process global hotkey commands
         
-        # Ignore commands during startup to prevent processing old/accidental commands
-        if time.time() - self.startup_time < self.startup_delay:
-            print(f"🎮 Ignoring global command during startup: {command}")
-            return False
-        
-        # Create a unique command identifier for deduplication
-        command_id = f"{command}_{command_data.get('level', '')}_{command_data.get('preset_key', '')}_{command_data.get('direction', '')}"
-        current_time = time.time()
-        
-        # Check for duplicate commands within cooldown period (exempt scroll for continuous smoothness)
-        if (command != 'scroll' and
-            self.last_processed_command and 
-            self.last_processed_command['id'] == command_id and 
-            current_time - self.last_processed_command['time'] < self.command_cooldown):
-            print(f"🎮 Ignoring duplicate command within cooldown: {command}")
-            return False
-        
-        # Update last processed command
-        self.last_processed_command = {
-            'id': command_id,
-            'time': current_time,
-            'command': command
-        }
             
         print(f"🎮 Processing global command: {command}")
         
@@ -225,19 +197,12 @@ class GlobalCommandMonitor:
     def _execute_browser_command(self, js_code):
         """Execute JavaScript code in the browser with thread-safety and error containment"""
         try:
-            # Use webview's evaluate_js to run the command
+            # Execute the command in the main window.
             if hasattr(webview, 'windows') and webview.windows:
                 window = webview.windows[0]  # Get the first (main) window
                 
-                try:
-                    window.evaluate_js(js_code)
-                except Exception as js_error:
-                    # If direct execution fails, fallback to microtask queue
-                    wrapped_code = f"setTimeout(() => {{ try {{ {js_code} }} catch(e) {{ console.warn('Global command error:', e); }} }}, 0);"
-                    try:
-                        window.evaluate_js(wrapped_code)
-                    except Exception:
-                        pass
+                # Do not replay a toggle after an error: the first call may have changed state.
+                window.run_js(f"try {{ {js_code} }} catch(e) {{ console.warn('Global command error:', e); }}")
             else:
                 pass  # Window not yet initialized
         except Exception as e:

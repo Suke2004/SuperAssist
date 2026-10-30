@@ -31,18 +31,21 @@ Finalized speech, questions, answers, and screenshot analyses are checkpointed l
 3. Select the playback output or routed input used by your meeting. On macOS this is BlackHole; on Linux it is the playback monitor.
 4. Start the interview. Answers appear automatically, or turn off Auto answer and use **Answer** for the pending question. **Chat** sends a typed follow-up; **Screenshot** requests visual context.
 
-Windows direct audio uses WASAPI loopback and **does not ask to share the screen or audio**. It can capture a meeting or YouTube playing through the selected output. Screenshot capture asks for screen permission separately. Browser capture is an alternative that requires sharing a meeting tab or supported screen with its audio enabled.
+Windows direct audio uses WASAPI loopback and **does not ask to share the screen or audio**. It can capture a meeting or YouTube playing through the selected output. Windows desktop screenshots capture the primary display directly. Browser capture is an alternative that requires sharing a meeting tab or supported screen with its audio enabled.
 
 The microphone is optional for Windows direct audio. If browser microphone permission fails, the session still captures the interviewer from system playback. Your own speech is not transcribed in that case. Restart after granting microphone access to capture both speakers.
 
 ## Scrolling and capture troubleshooting
 
+- **Screenshot** or **Ctrl+Shift+Win+S** captures directly into the vision queue and opens the queue when needed. Review the thumbnails, remove an unwanted image with **×**, then choose **Process** or **Ctrl+Shift+Win+P** to analyze the remaining images. Native desktop capture keeps the image inside the app; macOS needs Screen Recording permission, and Wayland uses an image picker. Vision mode and screenshot capture preserve your microphone mute and manual pause settings.
+- Process sends one batch at a time. Screenshots captured during analysis stay queued for the next batch; successful analysis removes only the images it processed.
 - Interviews start with mouse interaction enabled. Scroll the answer pane with the wheel, trackpad, scrollbar, or the global PageUp/PageDown shortcuts. Scrolling up pauses automatic following; End or the down-arrow button returns to the latest answer.
 - Click-through mode is optional. If clicks or wheel scrolling pass into the meeting underneath, press **Ctrl+Shift+Win+K** to turn it off. The global scroll shortcuts also work while click-through is enabled.
 - While testing audio, play YouTube through your headphones and watch the system-audio status. **Audio detected (output name)** confirms playback reaches capture; **waiting for playback** means that output currently has no detected sound. Silence between questions is normal.
 - If no sound is detected, compare the selected output with the meeting/browser output. End the session and select the correct output after plugging in headphones, changing devices, or changing the sample rate. Microphone permission is not required for direct output capture.
 - If sound is detected but transcripts are absent, check the separate transcription status and the configured Deepgram key, quota, and network connection.
 - **M** mutes only the assistant's microphone. **U** pauses all assistant audio capture. These controls do not mute the meeting application's microphone.
+- Use the full platform chord shown in the shortcut table. Each press triggers one action; holding a toggle key does not repeat it. A shortcut registered by the native listener is handled there, while unregistered keys have a fallback in the focused app window. OS permissions and shortcuts owned by another app can still limit global access; diagnostics are in `output/desktop-launch.log`.
 - Complete answers also render when the provider returns a finished response without streaming chunks.
 
 ## All Windows shortcuts

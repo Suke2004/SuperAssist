@@ -15,6 +15,7 @@ class ScreenshotService {
         this.screenshotQueue = [];
         this.maxScreenshots = DEFAULT_MAX_SCREENSHOTS;
         this.isCapturing = false;
+        this.isProcessing = false;
         this.visionConfig = null;
         this.programmingLanguages = [];
         
@@ -375,7 +376,7 @@ class ScreenshotService {
         this.isCapturing = true;
         
         try {
-            if (window.pywebview?.api && /Mac|Linux/.test(navigator.platform)) {
+            if (window.pywebview?.api?.capture_screenshot) {
                 const result = await window.pywebview.api.capture_screenshot();
                 if (result.error) throw new Error(result.error);
                 let blob;
@@ -565,8 +566,8 @@ class ScreenshotService {
         }
         
         // Update process button
-        processBtn.textContent = `Process (${this.screenshotQueue.length})`;
-        processBtn.disabled = this.screenshotQueue.length === 0 || !this.visionConfig;
+        processBtn.textContent = this.isProcessing ? 'Processing...' : `Process (${this.screenshotQueue.length})`;
+        processBtn.disabled = this.isProcessing || this.screenshotQueue.length === 0 || !this.visionConfig;
         
         // Update grid
         queueGrid.innerHTML = '';
@@ -576,7 +577,7 @@ class ScreenshotService {
             item.className = 'screenshot-item';
             item.innerHTML = `
                 <img src="${screenshot.dataUrl}" alt="Screenshot" class="screenshot-image">
-                <button class="screenshot-remove" type="button">×</button>
+                <button class="screenshot-remove" type="button" aria-label="Remove screenshot">×</button>
                 <div class="screenshot-info">
                     ${new Date(screenshot.timestamp).toLocaleTimeString()}
                     <br>${this.formatFileSize(screenshot.size)}
@@ -601,6 +602,7 @@ class ScreenshotService {
     
     // Vision processing methods
     async processQueue() {
+        if (this.isProcessing) return false;
         if (this.screenshotQueue.length === 0) {
             this.showNotification('❌ No Screenshots', 'Take some screenshots first', 'error');
             return;
@@ -611,14 +613,12 @@ class ScreenshotService {
             return;
         }
         
-        const processBtn = document.getElementById('process-queue-btn');
-        if (processBtn) {
-            processBtn.disabled = true;
-            processBtn.textContent = 'Processing...';
-        }
+        const batch = [...this.screenshotQueue];
+        this.isProcessing = true;
+        this.updateQueueUI();
         
         try {
-            const screenshots = this.screenshotQueue.map(s => s.dataUrl);
+            const screenshots = batch.map(s => s.dataUrl);
             
             console.log('🔄 Processing comprehensive multi-screenshot analysis...');
             console.log(`📸 Analyzing ${screenshots.length} screenshots together as one complete problem`);
@@ -631,8 +631,8 @@ class ScreenshotService {
                 // Note: Vision analysis display is handled by main.js WebSocket message handler
                 // to avoid duplicate display. We just handle UI feedback here.
                 
-                // Clear queue after successful processing
-                this.clearQueue();
+                // Keep captures added while this batch was being analyzed.
+                this.screenshotQueue = this.screenshotQueue.filter(s => !batch.some(sent => sent.id === s.id));
                 this.showNotification('✅ Comprehensive Analysis Complete', 
                     `${screenshots.length} screenshots analyzed with 2 solution approaches`, 'success');
             } else {
@@ -643,10 +643,8 @@ class ScreenshotService {
             console.error('❌ Vision processing error:', error);
             this.showNotification('❌ Processing Error', error.message, 'error');
         } finally {
-            if (processBtn) {
-                processBtn.disabled = false;
-                processBtn.textContent = `Process (${this.screenshotQueue.length})`;
-            }
+            this.isProcessing = false;
+            this.updateQueueUI();
         }
     }
     

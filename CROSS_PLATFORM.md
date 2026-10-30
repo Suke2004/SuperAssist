@@ -34,7 +34,7 @@ open VeyraCue.app
 
 The builder compiles the bundled AppleScript and adds the microphone usage description to the app's Info.plist. Keep `VeyraCue.app` in the project folder beside `silent_run.sh`; its launch path is resolved from the app's location. Double-click that app for subsequent launches. First-run downloads may take longer before the desktop window appears; inspect the log for startup failures. Revisit macOS permissions when changing Python environments, because the OS may identify the new interpreter separately.
 
-Screenshots use the native macOS screen-capture tool after Screen Recording permission is granted. Temporary screenshot files are deleted after loading; queued images remain in memory until sent to the selected vision engine or cleared.
+Screenshots use the native macOS screen-capture tool after Screen Recording permission is granted. The Screenshot button and Option+S capture directly into the queue, activating vision mode when needed. Review its thumbnails, remove an image with ×, and use Process or Option+P to analyze the queue. Capture opens no image viewer, and vision mode preserves manual mute/pause settings. Temporary screenshot files are deleted after loading; queued images remain in memory until sent to the selected vision engine or cleared.
 
 ### macOS startup troubleshooting
 
@@ -72,7 +72,7 @@ Choose **Linux system audio**, select the monitor of the headphones/speakers use
 
 Run `bash silent_run.sh` for background startup with no terminal output or continuing terminal dependency. Inspect `output/desktop-launch.log` if no window appears. A desktop shortcut can use command `bash "/absolute/project/path/silent_run.sh"` with **Run in terminal** disabled. `bash run.sh --update` reinstalls locked dependencies. Do not run the graphical app as root; Qt Chromium requires a normal desktop user.
 
-Choose an **X11/Xorg session** at login for global shortcuts, click-through, taskbar hiding, and native screenshots. A compositor/window manager can override topmost, opacity, or taskbar requests. If global shortcuts are unavailable, taskbar hiding and click-through remain disabled and Show/Hide minimizes the window.
+Choose an **X11/Xorg session** at login for global shortcuts, click-through, taskbar hiding, and native screenshots. Screenshot captures add directly to the vision queue; remove unwanted thumbnails before choosing Process. Capturing or toggling vision mode preserves manual mute/pause settings. A compositor/window manager can override topmost, opacity, or taskbar requests. If global shortcuts are unavailable, taskbar hiding and click-through remain disabled and Show/Hide minimizes the window.
 
 On **Wayland**, live answers and native audio still work. Shortcut commands work while the app is focused. The Screenshot button opens an image picker: take a screenshot using your desktop's screenshot tool, then select that image for the existing vision queue. Global shortcuts and unattended desktop screenshots are not claimed on Wayland.
 
@@ -99,11 +99,15 @@ macOS uses **Option** plus:
 
 Mac global shortcuts use physical key codes so Option-generated symbols do not replace the intended shortcut letter. The existing Option+Z, arrow, and I/J aliases remain. Home/End/Escape answer reading controls remain local on all platforms; on a MacBook keyboard, Fn+Left/Fn+Right typically provide Home/End.
 
+The focused desktop window uses the same action bindings as the native listener, including mute, screenshot capture, queue clearing, movement, and scrolling. Registered native keys are excluded from browser dispatch individually so one press cannot toggle twice. Unregistered keys retain a focused-window fallback. Global access still requires the platform's permissions and an available chord; a shortcut owned by another application is reported and left unregistered.
+
 ## Validation and limits
 
 Run `uv run --managed-python --python 3.12 -m pytest -q` from the project folder. It installs the development group and uses the same managed runtime. Tests cover launcher working directories, locked setup, background logging, setup failures, platform renderer selection, output/microphone separation, PCM conversion, permission errors, exact modifier handling, pause/cleanup, screenshots, and Windows regressions. macOS regressions exercise Cocoa lookup/setter/readback on the main thread, failed or unverifiable capture exclusion, and continued production setup after a sharing API error. Browser platform checks are in `tests/cross_platform_check.js`.
 
 For this startup fix, the full suites passed on Windows (238 passed, 2 skipped) and Linux (230 passed, 10 skipped). The launcher regression also passed under Bash 3.2 compiled on Linux, covering normal, update, install, and silent startup. The same check reproduced the empty-array error in the old launcher. This verifies shell compatibility, not execution on macOS itself.
+
+The subsequent screenshot/shortcut fix passed 330 Windows tests and 322 Linux tests. `tests/screenshot_shortcuts_check.js` covers all 26 action mappings for Windows, macOS, and Linux browser platform settings, repeated/disabled keys, individual native-key suppression, microphone mute/pause, answer and vision model toggles, manual pause preservation, queue removal, and explicit analysis. It also checks one in-flight analysis at a time, preservation of newer captures, and retry after a failed analysis. A Windows native check registered all 26 chords and captured a 2880×1800 primary-display image without launching a viewer. Physical Mac shortcut permissions and native screenshot capture still require on-device confirmation.
 
 The Debian/WSL X11 runtime check captured synthetic playback from a real PulseAudio monitor at 48kHz and exercised Qt window controls, an actual global shortcut dispatch, and native screenshot queuing. This uses a virtual desktop/test sink; it does not establish microphone/headphone behavior on every physical Linux device. Windows and Linux backend suites and browser platform checks also passed. The locked production dependencies resolve for both `aarch64-apple-darwin` and `x86_64-apple-darwin` in uv dry runs. These checks and the mocked Cocoa tests do not establish native Mac GUI or audio behavior; on-device testing of the reported Python error remains outstanding.
 

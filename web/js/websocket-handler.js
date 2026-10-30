@@ -516,6 +516,7 @@ export class WebSocketHandler {
 
     async startInterview(microphoneAvailable = true) {
         const state = this.stateManager.getState();
+        this.answerModeFull = true;
         const initialMuteStatus = window.muteManager?.getMuteStatus() || { microphone: false, universal: false };
         
         const interviewPayload = {
@@ -568,7 +569,7 @@ export class WebSocketHandler {
      * accordingly. Returns the mode that was just activated.
      */
     toggleAnswerMode() {
-        this.answerModeFull = this.answerModeFull === undefined ? true : !this.answerModeFull;
+        this.answerModeFull = !(this.answerModeFull ?? true);
         const generateFullAnswers = this.answerModeFull;
         this.sendMessage('config_update', { generateFullAnswers });
         console.log(`🎯 Answer mode -> ${generateFullAnswers ? 'full answers' : 'quick hints'}`);

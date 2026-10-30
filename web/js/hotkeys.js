@@ -2,10 +2,10 @@
 // Provides keyboard shortcuts for transparency and other controls
 
 import { devLog } from './config.js';
-import muteManager from './mute-manager.js';
 import liveInterviewUI from './live-interview.js';
 
-export const isAppShortcut = event => !event.defaultPrevented && !window.__nativeHotkeys && (/Mac/.test(navigator.platform)
+export const isAppShortcut = event => !event.defaultPrevented &&
+    !(window.__nativeHotkeys && (!window.__nativeHotkeyCodes || window.__nativeHotkeyCodes.includes(shortcutCode(event)))) && (/Mac/.test(navigator.platform)
     ? event.altKey && !event.ctrlKey && !event.metaKey && (!event.shiftKey || !!window.pywebview?.api)
     : event.ctrlKey && event.shiftKey && event.metaKey && !event.altKey);
 
@@ -18,7 +18,8 @@ const shortcutCode = event => {
             Comma: 0x21, Period: 0x22, ArrowUp: 0x21, ArrowDown: 0x22, KeyI: 0x26, KeyJ: 0x28 };
         if (mac[event.code]) return mac[event.code];
     }
-    return special[event.code] || (/^Key[HKVSPRQWETMUYOG]$/.test(event.code) ? event.code.charCodeAt(3) : undefined);
+    const key = event.code.startsWith('Key') ? event.code.slice(3) : event.key.toUpperCase();
+    return special[event.code] || (/^[HKVSPRQWETMUYOG]$/.test(key) ? key.charCodeAt(0) : undefined);
 };
 
 class HotkeyManager {
@@ -40,46 +41,35 @@ class HotkeyManager {
 
     handleKeyDown(event) {
         if (!this.isEnabled || !isAppShortcut(event) || event.repeat) return;
-        if (window.pywebview?.api && /Mac|Linux/.test(navigator.platform)) {
-            const code = shortcutCode(event);
+        const code = shortcutCode(event);
+        if (window.pywebview?.api) {
             if (code !== undefined) {
                 event.preventDefault();
-                window.pywebview.api.shortcut(code);
+                window.pywebview.api.shortcut(code).catch(error => console.warn('Shortcut failed:', error));
             }
             return;
         }
-
-        // Note: Ctrl+Shift+Win+M and Ctrl+Shift+Win+U are handled by global hotkeys only to prevent conflicts
-        
-        // Check for Alt+[ to decrease transparency
-        if (event.code === 'BracketLeft' || event.key === '[') {
-            event.preventDefault();
-            this.decreaseTransparency();
-            return;
-        }
-
-        // Check for Alt+] to increase transparency
-        if (event.code === 'BracketRight' || event.key === ']') {
-            event.preventDefault();
-            this.increaseTransparency();
-            return;
-        }
-
-        // P4: Ctrl+Shift+Win+G toggles full answers <-> quick hints mid-interview.
-        if (event.key.toLowerCase() === 'g') {
-            event.preventDefault();
-            if (window.wsHandler && typeof window.wsHandler.toggleAnswerMode === 'function') {
-                const fullMode = window.wsHandler.toggleAnswerMode();
-                liveInterviewUI.addMessage(
-                    fullMode ? '🎯 Answer mode: FULL answers' : '⚡ Answer mode: QUICK hints',
-                    'system-message'
-                );
+        const actions = {
+            0xDB: () => this.decreaseTransparency(), 0xDD: () => this.increaseTransparency(),
+            77: window.toggleMicMute, 85: window.toggleUniversalMute,
+            86: window.toggleVisionMode, 83: window.captureScreenshot,
+            80: window.processScreenshots, 82: window.resetScreenshotQueue,
+            81: () => window.switchPreset('primary'), 87: () => window.switchPreset('secondary'),
+            69: () => window.switchPreset('auto'), 84: window.switchVisionModel,
+            79: window.resetInterview,
+            71: () => {
+                const fullMode = window.wsHandler?.toggleAnswerMode();
+                liveInterviewUI.addMessage(fullMode ? '🎯 Answer mode: FULL answers' : '⚡ Answer mode: QUICK hints', 'system-message');
             }
+        };
+        if (actions[code]) {
+            event.preventDefault();
+            actions[code]();
         }
     }
 
     handleKeyUp(event) {
-        if (window.pywebview?.api && /Mac|Linux/.test(navigator.platform) &&
+        if (window.pywebview?.api &&
             ([0x21, 0x22].includes(shortcutCode(event)) || ['Alt', 'Control', 'Shift', 'Meta'].includes(event.key))) {
             window.pywebview.api.stop_scrolling();
         }
@@ -224,7 +214,6 @@ class HotkeyManager {
         }
     }
 
-    // Note: Audio toggle methods removed - handled by global hotkeys only
 }
 
 // Create global instance

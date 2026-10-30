@@ -5,6 +5,7 @@
 # This is the "stealth" feature of the Aura application.
 
 import os
+import json
 import ctypes
 import webview
 import time
@@ -242,6 +243,7 @@ class WindowManager:
         self.is_linux = platform.system() == 'Linux'
         self.qt_dispatcher = None
         self.shortcut_bindings = {}
+        self.registered_hotkeys = set()
         self.global_hotkeys_active = False
         self.current_transparency = 1.0
         self.is_ghost_mode = False
@@ -1289,29 +1291,39 @@ class WindowManager:
         try:
             self.hotkey_listener = keyboard.Listener(on_press=on_press, on_release=on_release, suppress=False)
             self.hotkey_listener.start()
-            self.global_hotkeys_active = True
+            self._set_registered_hotkeys(bindings)
             self.hide_from_taskbar()
-            if webview.windows:
-                webview.windows[0].evaluate_js('window.__nativeHotkeys = true;')
             self.hotkey_listener.join()
         except Exception as error:
             print(f'Global shortcuts unavailable: {error}')
         finally:
-            self.global_hotkeys_active = False
-            if webview.windows:
-                webview.windows[0].evaluate_js('window.__nativeHotkeys = false;')
+            self._set_registered_hotkeys([])
+
+    def _set_registered_hotkeys(self, codes):
+        self.registered_hotkeys = set(codes)
+        self.global_hotkeys_active = bool(self.registered_hotkeys)
+        if webview.windows:
+            try:
+                webview.windows[0].run_js(
+                    f'window.__nativeHotkeys = {json.dumps(self.global_hotkeys_active)}; '
+                    f'window.__nativeHotkeyCodes = {json.dumps(sorted(self.registered_hotkeys))};')
+            except Exception as error:
+                print(f'Could not update shortcut status: {error}')
 
     def _run_windows_hotkeys(self, bindings):
         """Register exact chords; occupied shortcuts stay with their current owner."""
         modifiers = 0x0002 | 0x0004 | 0x0008  # Ctrl + Shift + Win, without Alt.
         registered = {}
+        codes = []
         message = wintypes.MSG()
         try:
             for hotkey_id, (key, callback) in enumerate(bindings.items(), 1):
                 if _user32.RegisterHotKey(None, hotkey_id, modifiers | 0x4000, key):
                     registered[hotkey_id] = callback
+                    codes.append(key)
                 else:
                     print(f'VeyraCue shortcut unavailable: Ctrl+Shift+Win+VK {key:#x}; leaving it unbound.')
+            self._set_registered_hotkeys(codes)
             while not self._hotkey_stop.is_set():
                 while _user32.PeekMessageW(ctypes.byref(message), None, 0x0312, 0x0312, 1):
                     callback = registered.get(message.wParam)
@@ -1331,6 +1343,7 @@ class WindowManager:
             for hotkey_id in registered:
                 _user32.UnregisterHotKey(None, hotkey_id)
             self.scrolling_up = self.scrolling_down = False
+            self._set_registered_hotkeys([])
 
     def send_preset_switch_signal(self, preset_key: str):
         """Send preset switch signal to the application"""
