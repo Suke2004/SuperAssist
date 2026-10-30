@@ -1,12 +1,13 @@
 import { devLog } from './config.js';
 import liveInterviewUI from './live-interview.js';
+import { apiRequest } from './session-api.js';
 
 export class WebSocketHandler {
     constructor(stateManager) {
         this.stateManager = stateManager;
         this.socket = null;
         this.providerManager = null; // Direct reference to the ProviderManager
-        this.session_id = null;
+        this.session_id = sessionStorage.getItem('superassist-session-id');
         this.reconnect_attempts = 0;
         this.max_reconnect_attempts = 5;
         this.is_intentionally_closing = false;
@@ -57,7 +58,7 @@ export class WebSocketHandler {
         const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         let url = `${scheme}//${host}/ws`;
         if (this.session_id) {
-            url += `?session_id=${this.session_id}`;
+            url += `?session_id=${encodeURIComponent(this.session_id)}`;
         }
 
         this.updateCheckStatus(this.checks.backend, 'pending', 'Connecting...');
@@ -76,7 +77,7 @@ export class WebSocketHandler {
         };
 
         try {
-            const socket = new WebSocket(url);
+            const socket = new WebSocket(url, ['superassist', window.__APP_TOKEN__ || 'local']);
             this.socket = socket;
             this.stateManager.setSocket(socket);
 
@@ -138,6 +139,7 @@ export class WebSocketHandler {
         if (socket !== this.socket) return;
         this.audioSessionReady = false;
         this.pendingStart?.reject(new Error('Connection lost during audio startup'));
+        window.dispatchEvent(new CustomEvent('superassist:answer-complete', { detail: { success: false } }));
         console.log(`[close] Connection closed. Intentional: ${this.is_intentionally_closing}`);
         this._rejectConnection(new Error("WebSocket connection closed before session establishment."));
         // This is now handled by the ProviderManager
@@ -173,6 +175,7 @@ export class WebSocketHandler {
                 window.dispatchEvent(new CustomEvent('superassist:session-lost'));
             }
             this.session_id = data.payload.session_id;
+            sessionStorage.setItem('superassist-session-id', this.session_id);
             this.audioSessionReady = !lostSession;
             console.log(`🚀 New session started: ${this.session_id}`);
             // Resolve the connection promise now that session is confirmed.
@@ -182,6 +185,7 @@ export class WebSocketHandler {
             this.flushAudioBuffer();
             console.log(`✅ Session resumed: ${data.payload.session_id}`);
             liveInterviewUI.addMessage("Connection restored. Your session has been resumed.", "system-message");
+            if (document.body.dataset.view === 'live') liveInterviewUI.setSessionStatus('listening');
             // Also resolve the promise on resume.
             this._resolveConnection();
         }
@@ -199,6 +203,7 @@ export class WebSocketHandler {
             const delay = Math.pow(2, this.reconnect_attempts) * 1000;
             console.log(`Attempting to reconnect in ${delay / 1000}s... (Attempt ${this.reconnect_attempts})`);
             liveInterviewUI.addMessage(`Connection lost. Reconnecting... (Attempt ${this.reconnect_attempts})`, "system-error", true);
+            liveInterviewUI.setSessionStatus('reconnecting');
             
             this.reconnectTimer = setTimeout(() => {
                 this.reconnectTimer = null;
@@ -233,6 +238,7 @@ export class WebSocketHandler {
             this.socket.close();
         }
         this.session_id = null; // Clear session on intentional disconnect
+        sessionStorage.removeItem('superassist-session-id');
     }
 
     // --- All original message handlers go here ---
@@ -242,9 +248,11 @@ export class WebSocketHandler {
                 this.audioSessionReady = true;
                 this.flushAudioBuffer();
                 this.pendingStart?.resolve(data.payload);
+                liveInterviewUI.setSessionStatus('listening');
                 break;
             case 'interview_start_failed':
                 this.pendingStart?.reject(new Error(data.payload.message));
+                liveInterviewUI.setSessionStatus('failed');
                 break;
             case 'audio_capture_status':
             case 'stt_status':
@@ -270,6 +278,9 @@ export class WebSocketHandler {
                 break;
             case 'auto_answer_status':
                 document.getElementById('auto-answer-toggle').checked = data.payload.enabled;
+                break;
+            case 'session_save_status':
+                if (!data.payload.success) liveInterviewUI.addMessage(data.payload.message, 'system-error');
                 break;
             case 'preset_initialized':
                 this.handlePresetInitialized(data.payload);
@@ -342,6 +353,7 @@ export class WebSocketHandler {
 
     handleAiAnswerComplete(payload) {
         liveInterviewUI.finalizeStreamingResponse(payload);
+        window.dispatchEvent(new CustomEvent('superassist:answer-complete', { detail: payload }));
     }
 
     handlePresetInitialized(payload) {
@@ -402,6 +414,7 @@ export class WebSocketHandler {
         this.pendingStart?.reject(new Error(payload.message || 'Session initialization failed'));
         console.error("WebSocket error:", payload);
         liveInterviewUI.addMessage(payload.message || 'The request could not be completed.', 'system-error');
+        window.dispatchEvent(new CustomEvent('superassist:answer-complete', { detail: { success: false } }));
         if (window.presetManager) {
             presetManager.showErrorNotification(payload.message);
         }
@@ -416,8 +429,10 @@ export class WebSocketHandler {
     sendMessage(type, payload) {
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
             this.socket.send(JSON.stringify({ type, payload }));
+            return true;
         } else {
             console.error(`Cannot send message ${type}: WebSocket not connected.`);
+            return false;
         }
     }
 
@@ -540,9 +555,11 @@ export class WebSocketHandler {
         finally { clearTimeout(timeout); this.pendingStart = null; }
     }
 
-    endInterview() {
-        this.sendMessage('end_interview', {});
+    async endInterview() {
+        if (!this.session_id) throw new Error('No session is available to save');
+        const result = await apiRequest('/api/finalize-session', { session_id: this.session_id });
         this.disconnect();
+        return result;
     }
 
     /**
@@ -568,23 +585,12 @@ export class WebSocketHandler {
             return null;
         }
         try {
-            const response = await fetch('/api/export-transcript', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: this.session_id })
-            });
-            if (!response.ok) {
-                const detail = await response.json().catch(() => ({}));
-                console.warn('Transcript export failed:', detail.detail || response.status);
-                liveInterviewUI.addMessage(`⚠️ Transcript export failed: ${detail.detail || response.statusText}`, "system-error");
-                return null;
-            }
-            const result = await response.json();
+            const result = await apiRequest('/api/export-transcript', { session_id: this.session_id });
             liveInterviewUI.addMessage(`💾 Transcript saved (${result.turns} turns): ${result.path}`, "system-message");
             return result.path;
         } catch (err) {
             console.error('Transcript export error:', err);
-            return null;
+            throw err;
         }
     }
     

@@ -98,9 +98,6 @@
     border-color: rgba(255, 87, 87, 0.3);
 }
 
-.mute-btn.muted .mute-text::after {
-    content: "d";
-}
 
 .pause-btn.paused {
     color: rgba(255, 170, 0, 0.9);
@@ -752,4 +749,4 @@
 .preset-notification,
 .hotkey-hint {
     display: none !important;
-} 
+}

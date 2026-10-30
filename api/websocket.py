@@ -7,6 +7,9 @@ from typing import Optional
 
 from .session_manager import session_manager
 from .metrics import app_metrics
+from core.config import APP_SESSION_TOKEN
+from core.security import same_origin
+from secrets import compare_digest
 
 router = APIRouter()
 
@@ -29,16 +32,8 @@ def _origin_host_is_local(websocket: WebSocket) -> bool:
     if not origin:
         return True  # Non-browser client (e.g. tests, pywebview builds)
 
-    try:
-        origin_host = urlsplit(origin).hostname
-    except ValueError:
-        return False
-    if not origin_host:
-        return False
-
-    host_header = websocket.headers.get("host", "")
-    request_host = host_header.split(":", 1)[0].lower()
-    return origin_host.lower() == request_host
+    scheme = 'https' if getattr(getattr(websocket, 'url', None), 'scheme', 'ws') == 'wss' else 'http'
+    return same_origin(origin, scheme, websocket.headers.get('host', ''))
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, session_id: Optional[str] = Query(None)):
@@ -53,6 +48,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: Optional[str] = Q
         await websocket.close(code=1008)
         return
 
+    protocols = [item.strip() for item in websocket.headers.get('sec-websocket-protocol', '').split(',')]
+    token = protocols[1] if len(protocols) == 2 and protocols[0] == 'superassist' else websocket.headers.get('x-app-token', '')
+    if not compare_digest(token, APP_SESSION_TOKEN):
+        await websocket.close(code=1008)
+        return
+    subprotocol = 'superassist' if protocols[0] == 'superassist' else None
+
     session = None
     if session_id:
         session = session_manager.get_session(session_id)
@@ -60,13 +62,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: Optional[str] = Q
             print(f"🔗 Resuming session: {session_id}")
             session.websocket = websocket
             session.cancel_delayed_cleanup()  # A resumed session must not be torn down
-            await websocket.accept()
+            await websocket.accept(subprotocol=subprotocol)
             await session._send_json("session_resumed", {"session_id": session.session_id})
         else:
             print(f"⚠️ Session not found: {session_id}. Creating new session.")
     
     if not session:
-        await websocket.accept()
+        await websocket.accept(subprotocol=subprotocol)
         session = session_manager.create_session()
         session.websocket = websocket
         await session._send_json("session_created", {"session_id": session.session_id})

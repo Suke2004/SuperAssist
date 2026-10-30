@@ -397,7 +397,8 @@ class VisionService:
 
     @property
     def _providers_path(self) -> Path:
-        configured = getattr(settings, "AI_PROVIDERS_PATH", "ai_providers.json")
+        from core.config import AI_PROVIDERS_PATH
+        configured = getattr(settings, "AI_PROVIDERS_PATH", AI_PROVIDERS_PATH)
         return Path(configured)
 
     def _load_providers_config(self):

@@ -83,11 +83,9 @@ export class StateManager {
     }
 
     handleOnboarding() {
+        const mode = document.getElementById('session-mode')?.value || 'interview';
         const requiredFields = {
-            'user-name': 'Name',
-            'user-company': 'Company',
-            'user-role': 'Role',
-            'user-resume': 'Resume',
+            ...(mode === 'interview' ? { 'user-name': 'Name', 'user-company': 'Company', 'user-role': 'Role', 'user-resume': 'Resume' } : {}),
             'ai-provider-select': 'AI Provider',
             'ai-model-select': 'AI Model'
         };
@@ -96,7 +94,7 @@ export class StateManager {
 
         for (const [id, name] of Object.entries(requiredFields)) {
             const element = document.getElementById(id);
-            if (!element || !element.value) {
+            if (!element || !element.value.trim()) {
                 console.warn(`[Validation] ${name} is a required field.`);
                 if (element) {
                     element.focus();
@@ -109,7 +107,7 @@ export class StateManager {
         }
 
         const focusCheckboxes = Array.from(this.onboardingForm.focusCheckboxes || []).filter(cb => cb.checked);
-        if (focusCheckboxes.length === 0) {
+        if (mode === 'interview' && focusCheckboxes.length === 0) {
             console.warn('[Validation] Please select at least one Interview Focus.');
             allValid = false;
         }
@@ -159,6 +157,9 @@ export class StateManager {
             .map(cb => cb.value);
 
         this.appState.onboardingData = {
+            mode,
+            session_mode: mode === 'call' ? 'regular' : 'interview',
+            documents: this.documents || [],
             name: this.onboardingForm.name?.value || '',
             company: this.onboardingForm.company?.value || '',
             role: this.onboardingForm.role?.value || '',

@@ -186,8 +186,8 @@ async def test_native_output_starts_without_a_microphone_transcription_connectio
     monkeypatch.setattr('services.native_audio.NativeLoopback', MagicMock(return_value=capture))
     monkeypatch.setattr('services.portable_audio.PortableCapture', MagicMock(return_value=capture))
     monkeypatch.setattr('api.session_manager.MultiLLMManager', MagicMock())
-    monkeypatch.setattr('api.session_manager.vision_service.set_context_manager', MagicMock())
-    monkeypatch.setattr('api.session_manager.vision_service.load_vision_providers', MagicMock())
+    monkeypatch.setattr('api.session_manager.VisionService.set_context_manager', MagicMock())
+    monkeypatch.setattr('api.session_manager.VisionService.load_vision_providers', MagicMock())
     await session.initialize_managers({}, None, None, None, {})
     assert session.is_active and session.stt_manager is manager and session.mic_stt_manager is None
     factory.assert_called_once()
@@ -228,7 +228,7 @@ async def test_stt_uses_balanced_keyterms_and_speech_events_without_blind_replac
     assert len(options.keyterm) == len({term.casefold() for term in options.keyterm}) <= 75
     events = {call.args[0] for call in connection.on.call_args_list}
     assert {LiveTranscriptionEvents.SpeechStarted, LiveTranscriptionEvents.UtteranceEnd} <= events
-    assert options.endpointing == 1500 and options.utterance_end_ms == '2000'
+    assert options.endpointing == 1000 and options.utterance_end_ms == '1500'
 
 
 @pytest.mark.asyncio

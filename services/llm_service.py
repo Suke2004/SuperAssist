@@ -3,6 +3,7 @@ import asyncio
 import inspect
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
+from time import monotonic
 from openai import AsyncOpenAI, APIStatusError, Timeout
 from core.config import AI_PROVIDERS_PATH, settings
 from core.key_utils import usable_keys
@@ -12,12 +13,13 @@ from core.prompts import get_interview_answer_prompt, get_quick_response_prompt
 from services.context_manager import PersistentContextManager
 import threading
 
-# A3: explicit client timeout. The OpenAI SDK default is ~600s which let a hung
-# stream stall the whole answer path for minutes. 60s is far above real
-# generation time on the supported providers (typically <5s) and bounds each
-# key-rotation attempt.
+# Bound transport waits; the answer path also enforces first-token and total
+# deadlines across streams, key rotation, and provider fallback.
 PROVIDER_TIMEOUT_SECONDS = 60.0
 PROVIDER_CONNECT_TIMEOUT_SECONDS = 10.0
+FIRST_TOKEN_TIMEOUT_SECONDS = 10.0
+ANSWER_TIMEOUT_SECONDS = 30.0
+ALL_PROVIDERS_TIMEOUT_SECONDS = 45.0
 
 # --- Enhanced LLMManager Class ---
 
@@ -50,6 +52,7 @@ class LLMManager:
                 base_url=base_url,
                 api_key=self.api_key,
                 timeout=Timeout(PROVIDER_TIMEOUT_SECONDS, connect=PROVIDER_CONNECT_TIMEOUT_SECONDS),
+                max_retries=0,
             )
             print(f"✅ LLMManager initialized for: {self.provider_name} - {self.model_name} ({len(self.api_keys)} keys available)")
         except Exception as e:
@@ -69,6 +72,7 @@ class LLMManager:
                 base_url=self.base_url,
                 api_key=self.api_key,
                 timeout=Timeout(PROVIDER_TIMEOUT_SECONDS, connect=PROVIDER_CONNECT_TIMEOUT_SECONDS),
+                max_retries=0,
             )
             self._request_count += 1
             app_metrics.inc("key_rotations")
@@ -133,9 +137,6 @@ class LLMManager:
         # Determine whether to generate full answers or rapid quick response.
         # Check explicit parameter, prompt prefix, or settings default.
         use_full_answers = generate_full_answers if generate_full_answers is not None else settings.GENERATE_FULL_ANSWERS
-        if question.startswith("QUICK HINT MODE"):
-            use_full_answers = False
-
         if use_full_answers:
             prompt = get_interview_answer_prompt(question, self.context_manager)
         else:
@@ -148,12 +149,32 @@ class LLMManager:
         # identically on every key, so fail fast and surface the real error.
         max_attempts = len(self.api_keys)
         last_error = None
+        started_at = monotonic()
+        deadline = started_at + ANSWER_TIMEOUT_SECONDS
+        ttft_ms = None
+        attempts_made = 0
         
         for attempt in range(max_attempts):
             try:
+                if monotonic() >= deadline:
+                    raise asyncio.TimeoutError("Answer deadline exceeded")
+                attempts_made += 1
                 # Rotate key for each attempt (first attempt uses current key)
                 if attempt > 0:
+                    old_client = self.client
                     self._rotate_key()
+                    close = getattr(old_client, 'close', None)
+                    if close:
+                        result = close()
+                        if inspect.isawaitable(result):
+                            await result
+                    if stream_callback is not None:
+                        try:
+                            keep_streaming = await stream_callback("", "reset")
+                        except Exception as exc:
+                            raise asyncio.CancelledError("Stream consumer disconnected") from exc
+                        if keep_streaming is False:
+                            raise asyncio.CancelledError("Stream consumer stopped")
                     print(f"🔄 Instant retry attempt {attempt+1}/{max_attempts} with next key for {self.provider_name}")
                 
                 # Build API params
@@ -177,37 +198,54 @@ class LLMManager:
 
                 if use_streaming:
                     api_params["stream"] = True
-                    full_answer = ""
-                    streaming_active = True
-                    try:
-                        async for chunk in await self.client.chat.completions.create(**api_params):
-                            if not streaming_active:
-                                break
-                            
-                            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                                content_chunk = chunk.choices[0].delta.content
-                                full_answer += content_chunk
-                                if stream_callback:
+                    async def read_stream():
+                        nonlocal ttft_ms
+                        first_token_deadline = min(deadline, monotonic() + FIRST_TOKEN_TIMEOUT_SECONDS)
+                        stream = await asyncio.wait_for(
+                            self.client.chat.completions.create(**api_params),
+                            timeout=max(0, first_token_deadline - monotonic()),
+                        )
+                        full_answer = ""
+                        received_content = False
+                        try:
+                            iterator = stream.__aiter__()
+                            while True:
+                                chunk_deadline = deadline if received_content else first_token_deadline
+                                try:
+                                    chunk = await asyncio.wait_for(iterator.__anext__(), max(0, chunk_deadline - monotonic()))
+                                except StopAsyncIteration:
+                                    break
+                                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                                    content_chunk = chunk.choices[0].delta.content
+                                    if content_chunk.strip() and not received_content:
+                                        received_content = True
+                                        ttft_ms = round((monotonic() - started_at) * 1000, 1)
+                                    full_answer += content_chunk
                                     try:
-                                        callback_result = await stream_callback(content_chunk, "chunk")
-                                        if callback_result is False:
-                                            streaming_active = False
-                                            break
-                                    except Exception as e:
-                                        streaming_active = False
-                                        break
-                        answer = full_answer.strip()
+                                        keep_streaming = await stream_callback(content_chunk, "chunk")
+                                    except Exception as exc:
+                                        raise asyncio.CancelledError("Stream consumer disconnected") from exc
+                                    if keep_streaming is False:
+                                        raise asyncio.CancelledError("Stream consumer stopped")
+                            return full_answer.strip()
+                        finally:
+                            close = getattr(stream, 'close', None)
+                            if close:
+                                result = close()
+                                if inspect.isawaitable(result):
+                                    await result
 
-                    except Exception as stream_err:
-                        print(f"⚠️ Streaming failed for {self.provider_name} key #{self._key_index}: {stream_err}")
-                        raise stream_err  # Let the outer retry loop handle it
+                    answer = await asyncio.wait_for(read_stream(), max(0, deadline - monotonic()))
                 else:
                     # Non-streaming API call
                     chat_completion = await asyncio.wait_for(
                         self.client.chat.completions.create(**api_params),
-                        timeout=30.0
+                        timeout=max(0, deadline - monotonic())
                     )
-                    answer = chat_completion.choices[0].message.content.strip()
+                    answer = (chat_completion.choices[0].message.content or '').strip() if chat_completion.choices else ''
+
+                if not answer:
+                    raise ValueError("Provider returned an empty answer")
                 
                 # Success! Add completed conversation exchange and return
                 if self.context_manager:
@@ -222,6 +260,8 @@ class LLMManager:
                     "model": self.model_name,
                     "key_rotated": attempt > 0,
                     "attempt": attempt + 1,
+                    "ttft_ms": ttft_ms,
+                    "duration_ms": round((monotonic() - started_at) * 1000, 1),
                     "response_time": datetime.now().isoformat()
                 }
                 
@@ -232,7 +272,7 @@ class LLMManager:
                 app_metrics.provider_error(self.provider_name)
                 # C8: only rotate to the next key when retrying can help
                 # (auth/rate-limit/5xx/network). Client errors fail fast.
-                if not is_retryable_error(e):
+                if not is_retryable_error(e) or monotonic() >= deadline:
                     break
                 continue
         
@@ -250,7 +290,7 @@ class LLMManager:
                 "model": self.model_name
             }
 
-        error_msg = f"All {max_attempts} keys failed for {self.provider_name}. Last error: {str(last_error)[:100]}"
+        error_msg = f"{attempts_made} key attempts failed for {self.provider_name}. Last error: {str(last_error)[:100]}"
         self.is_healthy = False
         self.last_error = str(last_error)
         self.error_count += 1
@@ -258,7 +298,7 @@ class LLMManager:
         
         return error_msg, {
             "error": "all_keys_failed",
-            "attempts": max_attempts,
+            "attempts": attempts_made,
             "provider": self.provider_name,
             "model": self.model_name
         }
@@ -493,17 +533,33 @@ class MultiLLMManager:
         """
         if not self.providers:
             return "No AI providers are configured.", {"error": "no_providers"}
-        
+        started_at = monotonic()
+        deadline = started_at + ALL_PROVIDERS_TIMEOUT_SECONDS
+
         async def _call_manager(mgr):
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return "Answer deadline exceeded.", {"error": "answer_timeout"}
+            parameters = inspect.signature(mgr.get_ai_answer).parameters
+            kwargs = {"generate_full_answers": generate_full_answers} if (
+                "generate_full_answers" in parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+            ) else {}
+            provider_started = monotonic()
             try:
-                return await mgr.get_ai_answer(question, stream_callback, generate_full_answers=generate_full_answers)
-            except TypeError:
-                return await mgr.get_ai_answer(question, stream_callback)
+                answer, info = await asyncio.wait_for(mgr.get_ai_answer(question, stream_callback, **kwargs), remaining)
+            except asyncio.TimeoutError:
+                return "Answer deadline exceeded.", {"error": "answer_timeout"}
+            if info.get('ttft_ms') is not None:
+                info['ttft_ms'] += round((provider_started - started_at) * 1000, 1)
+            info['duration_ms'] = round((monotonic() - started_at) * 1000, 1)
+            return answer, info
 
         # Try the active provider first
         if self.active_preset_key in self.providers:
             manager = self.providers[self.active_preset_key]
             answer, result_info = await _call_manager(manager)
+            if result_info.get('error') == 'answer_timeout':
+                return answer, result_info
             
             # If successful, return the answer
             if result_info.get("success"):
@@ -524,13 +580,17 @@ class MultiLLMManager:
                 # fallback's answer into a clean element.
                 if stream_callback is not None:
                     try:
-                        await stream_callback("", "reset")
-                    except Exception:
-                        pass
+                        keep_streaming = await stream_callback("", "reset")
+                    except Exception as exc:
+                        raise asyncio.CancelledError("Stream consumer disconnected") from exc
+                    if keep_streaming is False:
+                        raise asyncio.CancelledError("Stream consumer stopped")
                 
                 manager = self.providers[fallback_preset]
                 # Pass stream_callback so fallback streams directly to frontend HUD
                 answer, result_info = await _call_manager(manager)
+                if result_info.get('error') == 'answer_timeout':
+                    return answer, result_info
                 
                 if result_info.get("success"):
                     # Update active preset to the working one
@@ -602,6 +662,7 @@ async def verify_provider_connection(base_url: str, api_key: str, model_name: st
             base_url=base_url,
             api_key=api_key,
             timeout=Timeout(PROVIDER_TIMEOUT_SECONDS, connect=PROVIDER_CONNECT_TIMEOUT_SECONDS),
+            max_retries=0,
         )
         await asyncio.wait_for(temp_client.models.list(), timeout=20.0)
         print(f"✅ Connection to {base_url} with model {model_name} is valid.")

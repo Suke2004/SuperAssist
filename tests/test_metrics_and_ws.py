@@ -228,8 +228,8 @@ async def test_interview_start_runs_one_provider_health_preflight(monkeypatch):
     llm = StubLLM()
     monkeypatch.setattr("api.session_manager.MultiLLMManager", lambda: llm)
     monkeypatch.setattr("api.session_manager.DeepgramManager", StubSTT)
-    monkeypatch.setattr("api.session_manager.vision_service.set_context_manager", lambda context: None)
-    monkeypatch.setattr("api.session_manager.vision_service.load_vision_providers", lambda **kwargs: None)
+    monkeypatch.setattr("api.session_manager.VisionService.set_context_manager", lambda self, context: None)
+    monkeypatch.setattr("api.session_manager.VisionService.load_vision_providers", lambda self, **kwargs: None)
     appearance = MagicMock(return_value=True)
     monkeypatch.setattr('window_manager.window_manager.enable_proctoring_stealth_mode', appearance)
 

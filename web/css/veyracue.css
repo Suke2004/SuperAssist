@@ -68,6 +68,20 @@ input[type=checkbox] { accent-color: var(--accent-primary); }
 .session-bottom { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 7px 0 24px; }
 .session-bottom > span { font-size: 12px; color: var(--text-secondary); }
 #proceed-to-checks { width: auto; margin: 0; padding: 13px 20px; font-size: 13px; border-radius: 7px; }
+#proceed-to-checks { color: #102821; }
+#live-view .header-controls button:hover:not(:disabled), #live-view .live-more summary:hover { background: var(--bg-tertiary); border-color: var(--accent-primary); color: var(--text-primary); box-shadow: none; transform: none; }
+#live-view .header-controls .primary-action:hover:not(:disabled) { background: var(--accent-primary); color: #102821; }
+#live-view button[aria-pressed=true] { background: var(--bg-tertiary); color: var(--accent-primary); border-color: var(--accent-primary); }
+#live-view .answers-panel .streaming-text, #live-view .answers-panel .markdown-content { font-size: var(--answer-font-size, 14px); }
+#live-view .answer-question { border-left: 2px solid var(--accent-primary); padding-left: 10px; margin: 0 0 12px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.review-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+.review-actions button { width: auto; margin: 0; color: #102821; text-transform: none; }
+#session-history-list { display: grid; gap: 12px; }
+#session-history-list button { margin: 0; padding: 16px; text-align: left; text-transform: none; color: var(--text-primary); background: var(--bg-secondary); border-color: var(--border-color); }
+#session-review-events article { border-bottom: 1px solid var(--border-color); padding: 14px 0; }
+#session-review-events strong { font-size: 12px; color: var(--accent-primary); }
+#session-review-events p, #session-summary, #session-unsent-draft { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+#session-save-status, #session-documents-status { font-size: 13px; overflow-wrap: anywhere; color: var(--text-secondary); }
 #session-validation { color: #ffa8ac; font-size: 13px; }
 .advanced-info-box, .preset-info, .ai-config-primary, .ai-config-secondary, .vision-config-primary, .vision-config-secondary, .pro-tip-card, .hotkey-category { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--border-color); }
 .advanced-info-box code, .config-hint code { color: var(--accent-primary); }
@@ -79,7 +93,8 @@ input[type=checkbox] { accent-color: var(--accent-primary); }
 #preflight-view .container { max-width: 720px; }
 #live-view.active { left: 220px; width: calc(100% - 220px); padding: 0; }
 .live-interview-container { width: 100%; height: 100%; background: rgba(16,19,24,var(--bg-transparency)); color: var(--text-primary); pointer-events: auto; user-select: text; backdrop-filter: none; font-family: inherit; }
-.live-interview-container button, .live-interview-container button * { cursor: pointer !important; }
+body[data-view=live] :is(button, summary, [role=button], input[type=checkbox], select),
+body[data-view=live] :is(button, summary, [role=button]) * { cursor: default !important; }
 .live-header { min-height: 80px; max-height: none; padding: 20px 26px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); backdrop-filter: none; gap: 20px; flex-wrap: wrap; }
 .live-status strong { font-size: 14px; font-weight: 600; }
 .live-status small { display: block; color: var(--text-secondary); font-size: 11px; margin-top: 3px; }
@@ -138,7 +153,7 @@ body[data-view=live] #live-view.active { inset: 0; width: 100%; }
 #live-view button, #live-view summary { width: auto; margin: 0; display: inline-flex; align-items: center; justify-content: center; min-height: 32px; padding: 6px 10px; font-size: 11px; line-height: 1.2; border-radius: 5px; white-space: nowrap; }
 #live-view .primary-action { padding-inline: 15px; }
 #live-view .live-more { position: relative; }
-#live-view .live-more summary { border: 1px solid var(--border-color); color: var(--text-secondary); cursor: pointer; list-style: none; }
+#live-view .live-more summary { border: 1px solid var(--border-color); color: var(--text-secondary); list-style: none; }
 #live-view .live-more summary::-webkit-details-marker { display: none; }
 #live-view .live-more summary:focus-visible { outline: 3px solid var(--accent-primary); outline-offset: 3px; }
 #live-view .live-more-menu { position: absolute; right: 0; top: calc(100% + 8px); width: 250px; z-index: 40; padding: 8px; display: grid; gap: 5px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 8px 24px #00000060; }
@@ -149,16 +164,19 @@ body[data-view=live] #live-view.active { inset: 0; width: 100%; }
 #live-view .preset-hotkeys { display: none; }
 #live-view .interview-content { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(170px, .3fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 10px; padding: 10px 12px 8px; overflow: hidden; }
 #live-view .answers-panel, #live-view .transcript-panel { min-width: 0; min-height: 0; border-radius: 7px; }
-#live-view .panel-heading { flex: 0 0 auto; padding: 10px 14px; min-height: 40px; }
+#live-view .panel-heading { flex: 0 0 auto; padding: 10px 14px; min-height: 40px; background: var(--bg-secondary); }
 #live-view .panel-heading h2 { font-size: 13px; }
 #live-view .transcript-panel .panel-heading > span { display: none; }
 #live-view .auto-answer-toggle input { margin: 0; }
 #live-view .conversation-stream, #live-view .conversation-stream:empty, #live-view .conversation-stream.no-messages { flex: 1; min-height: 0; padding: 18px 22px; gap: 18px; }
-#live-view .answers-panel .streaming-text, #live-view .answers-panel .markdown-content { font-size: 14px; line-height: 1.55; }
+#live-view .answers-panel .streaming-text, #live-view .answers-panel .markdown-content { font-size: var(--answer-font-size, 14px); line-height: 1.65; }
 #live-view .answers-panel .markdown-blockquote p { font-size: inherit; }
 #live-view .answers-panel h1, #live-view .answers-panel h2 { font-size: 17px; }
 #live-view .answers-panel h3, #live-view .answers-panel h4 { font-size: 15px; }
-#live-view .conversation-stream { overflow-y: scroll; overscroll-behavior: contain; scrollbar-gutter: stable; scroll-behavior: auto; }
+#live-view .conversation-stream { overflow-y: scroll; overflow-anchor: none; overscroll-behavior: contain; scrollbar-gutter: stable; scroll-behavior: auto; }
+#live-view :is(.conversation-stream, .transcript-stream) { scrollbar-width: thin; scrollbar-color: var(--border-color) transparent; }
+#live-view .answers-panel:focus-within { border-color: var(--accent-primary); }
+#live-view .copy-button { top: 0; min-height: 28px; height: 28px !important; width: 28px !important; min-width: 28px !important; max-width: none !important; font-size: 13px !important; color: var(--text-primary) !important; opacity: 1 !important; }
 #live-view .conversation-stream > .message { flex: 0 0 auto; }
 #live-view .message { opacity: 1; animation: none; }
 #live-view .message.interviewer .label { color: var(--text-secondary); }
@@ -188,7 +206,7 @@ body[data-view=live] .resume-scroll-btn { bottom: 78px; right: 24px; width: 32px
     #live-view .transcript-panel { grid-row: 2; }
     #live-view .transcript-panel .panel-heading { min-height: 26px; padding: 5px 12px; }
     #live-view .conversation-stream { padding: 14px; }
-    #live-view .answers-panel .streaming-text, #live-view .answers-panel .markdown-content { font-size: 13px; }
+    #live-view .answers-panel .streaming-text, #live-view .answers-panel .markdown-content { font-size: var(--answer-font-size, 13px); }
     #live-view .activity-indicator { flex-basis: 24px; min-height: 24px; padding: 4px 10px; }
     body[data-view=live] .audio-health { max-width: 52%; }
 }

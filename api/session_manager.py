@@ -14,7 +14,8 @@ from .metrics import app_metrics
 from core.config import settings
 from services.llm_service import MultiLLMManager
 from services.stt_service import DeepgramManager
-from services.vision_service import vision_service
+from services.vision_service import VisionService
+from services.session_store import save_session, export_session, sanitize_record
 
 # Session TTL: 30 minutes of inactivity with no WebSocket connected
 SESSION_TTL_SECONDS = 30 * 60
@@ -76,6 +77,19 @@ class InterviewSession:
         self._send_lock = asyncio.Lock()
         self.llm_manager: Optional[MultiLLMManager] = None
         self.stt_manager: Optional[DeepgramManager] = None
+        self.vision_service = VisionService()
+        self.started_at = datetime.now().isoformat()
+        self.ended_at = None
+        self.status = 'ready'
+        self.onboarding = {}
+        self.providers = {}
+        self.events = []
+        self._record_lock = asyncio.Lock()
+        self._finalize_lock = asyncio.Lock()
+        self._finalizing = False
+        self._save_error = False
+        self._question_ready_at = None
+        self._partial_transcripts = {}
         self.is_active: bool = False
         self.state: Dict[str, Any] = {
             "is_muted": False,
@@ -89,6 +103,7 @@ class InterviewSession:
         self.last_activity_time: float = time.time()
         self._delayed_cleanup_task: Optional[asyncio.Task] = None
         self._answer_tasks = set()
+        self._vision_tasks = set()
         self._answer_lock = asyncio.Lock()
         # A1: rolling (timestamp, mic_dominant) hints, one per audio batch.
         # 200 entries at ~47 batches/s covers ~4s of history — well beyond
@@ -146,6 +161,75 @@ class InterviewSession:
         print(f"⬅️ [BACKEND] Sending 'api_key_status' for Deepgram. Valid: {is_valid}")
         await self._send_json("api_key_status", {"service": "deepgram", "valid": is_valid})
 
+    def get_record(self):
+        context_manager = getattr(self.llm_manager, 'shared_context', None)
+        context = context_manager.get_complete_context() if callable(getattr(context_manager, 'get_complete_context', None)) else {}
+        if not isinstance(context, dict):
+            context = {}
+        events = self.events or [{**turn, 'type': 'transcript'} for turn in self.transcript_log]
+        return sanitize_record({'session_id': self.session_id, 'started_at': self.started_at,
+            'ended_at': self.ended_at, 'status': self.status, 'onboarding': self.onboarding,
+            'context': context, 'providers': self.providers, 'events': list(events)})
+
+    async def _checkpoint(self):
+        async with self._record_lock:
+            try:
+                write = asyncio.create_task(asyncio.to_thread(save_session, self.get_record()))
+                try:
+                    path = await asyncio.shield(write)
+                except asyncio.CancelledError:
+                    await write
+                    raise
+                self._save_error = False
+                return path
+            except OSError:
+                if not self._save_error:
+                    await self._send_json('session_save_status', {'success': False,
+                        'message': 'Session save failed. Your current record is retained; free disk space or check exports permissions.'})
+                self._save_error = True
+                raise
+
+    async def _record_event(self, event_type, text, **metadata):
+        self.events.append({'type': event_type, 'timestamp': datetime.now().isoformat(), 'text': text, **metadata})
+        try:
+            await self._checkpoint()
+        except OSError:
+            pass
+
+    async def finalize(self):
+        async with self._finalize_lock:
+            self.cancel_delayed_cleanup()
+            self._finalizing = True
+            self.auto_answer_enabled = False
+            if self.silence_timer:
+                self.silence_timer.cancel()
+                self.silence_timer = None
+            captures = [capture for capture in (self.native_audio, self.native_microphone) if capture]
+            await asyncio.gather(*(capture.finish() for capture in captures), return_exceptions=True)
+            for manager in (self.stt_manager, self.mic_stt_manager):
+                if manager and hasattr(manager, 'flush'):
+                    try:
+                        await asyncio.wait_for(manager.flush(), timeout=3)
+                    except Exception:
+                        await self._record_event('gap', 'Final transcription could not be confirmed before ending.')
+            for speaker, text in list(self._partial_transcripts.items()):
+                if text:
+                    await self._record_event('transcript', text, speaker=speaker, provisional=True)
+            self._partial_transcripts.clear()
+            await self.cleanup()
+            self.status = 'completed'
+            self.ended_at = self.ended_at or datetime.now().isoformat()
+            path = await self._checkpoint()
+            record = self.get_record()
+            try:
+                export_path = await asyncio.to_thread(export_session, record)
+            except OSError:
+                self._save_error = True
+                raise
+            session_manager.remove_session(self.session_id)
+            return {'success': True, 'path': str(export_path), 'record_path': str(path),
+                'session_id': self.session_id, 'record': record}
+
     async def handle_start_interview(self, payload: dict):
         """Handles the 'start_interview' message."""
         self._touch()
@@ -159,6 +243,28 @@ class InterviewSession:
             primary_vision_config = payload.get('visionProvider')
             secondary_vision_config = payload.get('visionSecondaryProvider')
             onboarding_context = payload.get('onboardingData', {})
+            if not isinstance(onboarding_context, dict):
+                raise ValueError('Invalid session context.')
+            if any(not isinstance(value, (str, bool, list, type(None))) for value in onboarding_context.values()):
+                raise ValueError('Invalid session context values.')
+            if onboarding_context.get('session_mode', 'interview') not in ('interview', 'regular'):
+                raise ValueError('Invalid session mode.')
+            onboarding_context = {**onboarding_context,
+                'session_mode': 'regular' if onboarding_context.get('mode') == 'call' else onboarding_context.get('session_mode', 'interview')}
+            documents = onboarding_context.get('documents', [])
+            if (not isinstance(documents, list) or len(documents) > 8
+                    or any(not isinstance(doc, dict) or not isinstance(doc.get('name'), str)
+                        or not isinstance(doc.get('text'), str) or len(doc['name']) > 200
+                        or len(doc['text']) > 60000 for doc in documents)
+                    or sum(len(doc['text']) for doc in documents) > 120000):
+                raise ValueError('Use up to eight text documents, at most 60,000 characters each and 120,000 total.')
+            if any(isinstance(value, str) and len(value) > 120000 for value in onboarding_context.values()):
+                raise ValueError('Session context is too large.')
+            self.onboarding = sanitize_record(onboarding_context)
+            self.providers = {'primary': primary_provider_config, 'secondary': secondary_provider_config,
+                'active_preset': 'primary'}
+            self._finalizing = False
+            self.status = 'active'
             capture_mode = payload.get('audioCaptureMode', 'browser')
             output = payload.get('audioOutput', '')
             microphone_available = payload.get('microphoneAvailable', True)
@@ -182,6 +288,7 @@ class InterviewSession:
             self.state["is_universally_muted"] = payload.get('is_universally_muted', False)
 
             await self.initialize_managers(primary_provider_config, secondary_provider_config, primary_vision_config, secondary_vision_config, onboarding_context)
+            await self._checkpoint()
             if self.native_audio:
                 await self.native_audio.start()
             if self.native_microphone:
@@ -308,9 +415,14 @@ class InterviewSession:
         if 'sttLanguage' in payload:
             lang = payload['sttLanguage']
             if lang in ('en', 'multi') and lang != self.stt_language:
-                self.stt_language = lang
-                app_metrics.inc('stt_language_changes')
-                print(f"🌐 Session {self.session_id}: STT language -> {lang}")
+                managers = [manager for manager in (self.stt_manager, self.mic_stt_manager) if manager]
+                try:
+                    await asyncio.gather(*(manager.set_language(lang) for manager in managers))
+                    self.stt_language = lang
+                    app_metrics.inc('stt_language_changes')
+                except Exception:
+                    await self._send_json('error', {'message': 'Language update failed. Check transcription connection and retry.'})
+                    return
         if 'processAllSpeakers' in payload or 'process_all_speakers' in payload:
             self.state["process_all_speakers"] = payload.get('processAllSpeakers', payload.get('process_all_speakers'))
         if 'isUniversallyMuted' in payload or 'is_universally_muted' in payload:
@@ -369,6 +481,7 @@ class InterviewSession:
         if self.state.get("is_universally_muted"):
             return await self._send_json("error", {"message": "Resume the interview before asking a question."})
         self._touch()
+        await self._record_event('question', question.strip(), source='typed')
         self._queue_answer(question.strip())
 
     async def handle_request_answer(self, payload: dict):
@@ -442,25 +555,42 @@ class InterviewSession:
             print(f"Analyzing {len(screenshots)} screenshots with {provider_name}-{model_name}")
             app_metrics.inc("vision_requests")
 
-            analysis, result_info = await vision_service.analyze_coding_problem(
-                provider_name=provider_name,
-                model_name=model_name,
-                screenshots=screenshots,
-                languages=languages
-            )
+            async def analyze(provider, model):
+                task = asyncio.create_task(self.vision_service.analyze_coding_problem(
+                    provider_name=provider, model_name=model, screenshots=screenshots, languages=languages))
+                self._vision_tasks.add(task)
+                try:
+                    return await task
+                finally:
+                    self._vision_tasks.discard(task)
+
+            analysis, result_info = await analyze(provider_name, model_name)
+            success = bool(result_info.get('success', False)) and not result_info.get('error')
+            if not success and result_info.get('error') != 'invalid_screenshot':
+                secondary = self.vision_service.active_vision_providers.get('secondary')
+                if secondary and (secondary.provider_name, secondary.model_name) != (provider_name, model_name):
+                    analysis, result_info = await analyze(secondary.provider_name, secondary.model_name)
+                    success = bool(result_info.get('success', False)) and not result_info.get('error')
+                    provider_name, model_name = secondary.provider_name, secondary.model_name
+            await self._record_event('vision', analysis, provider=provider_name, model=model_name,
+                success=success, screenshot_count=len(screenshots))
             
             await self._send_json("vision_analysis_result", {
-                "success": result_info.get("success", True),
                 "analysis": analysis,
                 "provider": provider_name,
                 "model": model_name,
                 "screenshot_count": len(screenshots),
                 "languages": languages,
-                **result_info
+                **result_info,
+                "success": success
             })
             
             print(f"✅ Session {self.session_id}: Vision analysis completed successfully")
             
+        except asyncio.CancelledError:
+            if asyncio.current_task().cancelling():
+                raise
+            await self._send_json('vision_analysis_result', {'success': False, 'error': 'Analysis canceled because the session ended.'})
         except Exception as e:
             print(f"❌ CRITICAL: Session {self.session_id}: Vision analysis failed: {e}")
             await self._send_json("vision_analysis_result", {
@@ -471,8 +601,11 @@ class InterviewSession:
     async def handle_end_interview(self, payload: dict):
         """Handles the end of an interview."""
         print(f"🛑 Session {self.session_id}: Ending interview.")
-        await self.cleanup()
-        session_manager.remove_session(self.session_id)
+        try:
+            result = await self.finalize()
+            await self._send_json('interview_ended', result)
+        except OSError:
+            await self._send_json('error', {'message': 'Session stopped but saving failed. Retry saving; the record is retained.'})
 
     async def handle_reset_session(self, payload: dict):
         """Handles the reset of a session's context."""
@@ -499,14 +632,16 @@ class InterviewSession:
             raise ValueError("Failed to load AI provider configuration.")
         
         self.llm_manager.initialize_candidate_context(onboarding_context)
-        vision_service.set_context_manager(self.llm_manager.shared_context)
+        self.vision_service.set_context_manager(self.llm_manager.shared_context)
 
-        vision_service.load_vision_providers(
+        self.vision_service.load_vision_providers(
             primary_config=primary_vision_config,
             secondary_config=secondary_vision_config
         )
 
         user_languages = onboarding_context.get('selectedLanguages', [])
+        technical_terms = re.findall(r'\b(?:[A-Z][A-Za-z0-9+#.-]{2,30}|[A-Z]{2,12})\b',
+            ' '.join(str(onboarding_context.get(key, '')) for key in ('company', 'resume', 'objectives')))
         # P1: honor the session's STT language (en|multi) set at interview
         # start or via config updates.
         stt_language = self.stt_language or getattr(settings, 'STT_LANGUAGE', 'en')
@@ -537,6 +672,9 @@ class InterviewSession:
         else:
             self.stt_manager = DeepgramManager(self.on_transcript, user_languages, language=stt_language)
         starts = [asyncio.create_task(manager.start()) for manager in (self.stt_manager, self.mic_stt_manager) if manager]
+        for manager in (self.stt_manager, self.mic_stt_manager):
+            if manager:
+                manager.context_keyterms = list(dict.fromkeys(technical_terms))[:20]
         try:
             await asyncio.gather(*starts)
         except BaseException:
@@ -611,36 +749,43 @@ class InterviewSession:
         if question is None:
             self.transcript_buffer = ""
         
-        print(f"✅ Silence detected. Processing transcript for session {self.session_id}: {transcript}")
+        if self._finalizing:
+            return
+        print(f"Processing question for session {self.session_id} ({len(transcript)} characters)")
         if not self.llm_manager or not self.websocket:
             return
 
         try:
-            # P4: quick-hint mode prefixes the prompt so the LLM answers with a
-            # concise hint instead of full code, without touching provider config.
-            mode = "full"
-            prompt = transcript
-            if not self.generate_full_answers:
-                mode = "hints"
-                prompt = (
-                    "QUICK HINT MODE - reply with a concise 2-3 line hint only "
-                    "(approach + key insight), no full code:\n" + transcript
-                )
+            mode = 'full' if self.generate_full_answers else 'hints'
+            if question is None:
+                await self._record_event('question', transcript, source='speech')
 
             await self._send_json("ai_processing_started", {
                 "question": transcript, "mode": mode
             })
 
+            first_chunk_at = None
+            boundary_at = self._question_ready_at if question is None else None
             async def stream_callback(chunk: str, chunk_type: str):
+                nonlocal first_chunk_at
+                if chunk and first_chunk_at is None:
+                    first_chunk_at = time.monotonic()
+                    app_metrics.record_stage_latency('first_chunk', (first_chunk_at - _started) * 1000)
+                    if boundary_at:
+                        app_metrics.record_stage_latency('boundary_to_first_chunk', (first_chunk_at - boundary_at) * 1000)
                 return await self._send_json("ai_answer_chunk", {"chunk": chunk, "chunk_type": chunk_type})
 
             _started = time.monotonic()
             answer, result_info = await self.llm_manager.get_ai_answer(
-                prompt, stream_callback, generate_full_answers=self.generate_full_answers
+                transcript, stream_callback, generate_full_answers=self.generate_full_answers
             )
-            app_metrics.inc("questions_answered")
+            await self._record_event('answer', answer, question=transcript,
+                success=bool(result_info.get('success')), provider=result_info.get('provider'), model=result_info.get('model'))
             if result_info.get("success"):
+                app_metrics.inc("questions_answered")
                 app_metrics.record_answer_latency((time.monotonic() - _started) * 1000.0)
+            else:
+                app_metrics.inc('answer_failures')
             # fallbacks_used is recorded inside MultiLLMManager.get_ai_answer
 
             await self._send_json("ai_answer_complete", {"answer": answer, **result_info})
@@ -651,8 +796,14 @@ class InterviewSession:
         except Exception as e:
             print(f"❌ CRITICAL: Error processing transcript for session {self.session_id}: {e}")
             await self._send_json("error", {"message": "Error processing transcript."})
+        except asyncio.CancelledError:
+            await self._record_event('answer', 'Answer canceled before completion.', question=transcript, success=False)
+            raise
 
     def _schedule_transcript_answer(self, delay):
+        if self._finalizing:
+            return
+        self._question_ready_at = time.monotonic()
         if self.silence_timer:
             self.silence_timer.cancel()
         self.silence_timer = None
@@ -672,7 +823,7 @@ class InterviewSession:
 
     async def on_transcript(self, data):
         """Accumulate finalized segments until the speaker actually finishes."""
-        if self.state.get("is_universally_muted"):
+        if self.state.get("is_universally_muted") and not self._finalizing:
             return
 
         self._touch()
@@ -708,6 +859,8 @@ class InterviewSession:
         is_final = data.get('is_final', False)
         if not transcript:
             return
+        speaker_role = 'candidate' if is_candidate_speech else 'interviewer'
+        self._partial_transcripts[speaker_role] = '' if is_final else transcript
 
         # A1: attribute the transcript by majority vote of audio hints in the
         # window before now (transcript lags its speech by a few hundred ms).
@@ -740,13 +893,15 @@ class InterviewSession:
 
         if is_final:
             # P3: record every final turn in the exportable log.
-            self.transcript_log.append({
+            turn = {
                 'speaker': 'candidate' if is_candidate_speech else 'interviewer',
                 'text': transcript,
                 'timestamp': datetime.now().isoformat()
-            })
-            if len(self.transcript_log) > TRANSCRIPT_LOG_MAX_TURNS:
-                del self.transcript_log[:len(self.transcript_log) - TRANSCRIPT_LOG_MAX_TURNS]
+            }
+            self.transcript_log.append(turn)
+            await self._record_event('transcript', transcript, speaker=speaker_role)
+            if self._finalizing:
+                return
 
             if should_process:
                 # Hygiene: strip standalone filler words ("um", "uh", "erm")
@@ -762,8 +917,8 @@ class InterviewSession:
                 if not self.auto_answer_enabled:
                     return
                 
-                # Endpointing already includes a 1.5-second pause; punctuation is not a boundary.
-                self._schedule_transcript_answer(0.35 if data.get('speech_final') else 2.5)
+                # Endpointing already includes a one-second pause; punctuation is not a boundary.
+                self._schedule_transcript_answer(0.2 if data.get('speech_final') else 2.5)
             else:
                 if self.llm_manager:
                     self.llm_manager.process_candidate_response(transcript)
@@ -788,6 +943,12 @@ class InterviewSession:
             await asyncio.gather(*answer_tasks, return_exceptions=True)
 
         self.is_active = False
+        vision_tasks = [task for task in self._vision_tasks if not task.done()]
+        for task in vision_tasks:
+            task.cancel()
+        if vision_tasks:
+            await asyncio.gather(*vision_tasks, return_exceptions=True)
+            await self._record_event('vision', 'Analysis canceled before completion.', success=False)
         if self._health_task and not self._health_task.done():
             self._health_task.cancel()
             await asyncio.gather(self._health_task, return_exceptions=True)
@@ -801,12 +962,19 @@ class InterviewSession:
             self.native_microphone = None
             self.mic_stt_manager = None
         finally:
+            await self.vision_service.close()
             if self.llm_manager:
                 try:
                     await self.llm_manager.close()
                 except Exception as e:
                     print(f"Warning: error closing LLM resources for session {self.session_id}: {e}")
         self.is_active = False
+        if self.events and not self._finalizing:
+            self.status = 'interrupted'
+            try:
+                await self._checkpoint()
+            except OSError:
+                pass
         print(f"Session {self.session_id} cleaned up.")
 
 
@@ -879,7 +1047,8 @@ class SessionManager:
             await session.cleanup()
         except Exception as e:
             print(f"Warning: error cleaning up session {session_id}: {e}")
-        self.remove_session(session_id)
+        if not session._save_error:
+            self.remove_session(session_id)
 
     async def _cleanup_loop(self):
         """Periodically clean up stale sessions."""
@@ -906,7 +1075,8 @@ class SessionManager:
                     await session.cleanup()
                 except Exception as e:
                     print(f"⚠️ Error cleaning up stale session {sid}: {e}")
-                self.active_sessions.pop(sid, None)
+                if not session._save_error:
+                    self.active_sessions.pop(sid, None)
                 print(f"🧹 Cleaned up stale session: {sid} (remaining: {len(self.active_sessions)})")
         
         if stale_ids:

@@ -57,6 +57,9 @@ class DeepgramManager:
             raise ValueError('Unsupported capture sample rate.')
         self.sample_rate = sample_rate
         self._send_lock = asyncio.Lock()
+        self._language_lock = asyncio.Lock()
+        self._flush_complete = asyncio.Event()
+        self.context_keyterms = []
         self._last_gap_warning = 0.0
         self._last_audio_at = 0.0
         self._reconnect_attempts = 0
@@ -91,7 +94,7 @@ class DeepgramManager:
             'c++': ['C++', 'STL', 'vector'],
             'sql': ['SQL', 'JOIN', 'GROUP BY', 'window function'],
         }
-        terms = []
+        terms = list(self.context_keyterms)
         for language in user_languages or []:
             terms.extend(language_terms.get(language.lower(), [language]))
         terms.extend([
@@ -147,6 +150,37 @@ class DeepgramManager:
               f"{self._initial_connect_max_attempts} attempts: {last_error}")
         raise RuntimeError(f"Deepgram connection failed: {last_error}") from last_error
 
+    async def set_language(self, language):
+        if language not in ('en', 'multi'):
+            raise ValueError('Unsupported transcription language.')
+        async with self._language_lock:
+            if language == self.language:
+                return
+            previous_language = self.language
+            task = self._reconnect_task
+            if task and task is not asyncio.current_task() and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            self.language = language
+            self.is_connected = False
+            try:
+                await self._connect_once()
+            except Exception:
+                self.language = previous_language
+                try:
+                    await self._connect_once()
+                except Exception:
+                    await self._emit_status('failed', 'Transcription language update failed; reconnect required.')
+                raise
+
+    async def flush(self):
+        if not self.is_connected or not self.dg_connection or not self._last_audio_at:
+            return
+        self._flush_complete.clear()
+        if await asyncio.wait_for(self.dg_connection.send('{"type":"Finalize"}'), timeout=1) is False:
+            raise ConnectionError('Final transcription was rejected')
+        await asyncio.wait_for(self._flush_complete.wait(), timeout=2)
+
     async def _connect_once(self):
         """Create a fresh Deepgram connection and start it (single attempt)."""
         previous = self.dg_connection
@@ -180,9 +214,9 @@ class DeepgramManager:
             sample_rate=self.sample_rate,
             diarize=False,
             punctuate=True,
-            # Critical speech detection parameters - responsive endpointing
-            utterance_end_ms="2000",
-            endpointing=1500,
+            # Leave room for natural pauses; the session cancels answers when speech resumes.
+            utterance_end_ms="1500",
+            endpointing=1000,
             # Additional settings
             vad_events=True,
             interim_results=True,
@@ -308,6 +342,8 @@ class DeepgramManager:
                 'last_word_end': getattr(words[-1], 'end', None) if words else None,
             }
             if not transcript:
+                if getattr(result, 'from_finalize', False):
+                    self._flush_complete.set()
                 if metadata['speech_final']:
                     await self.transcript_callback({'type': 'utterance_end', **metadata})
                 return
@@ -320,6 +356,8 @@ class DeepgramManager:
                     'speaker': speaker, 'transcript': transcript,
                     'is_final': False, **metadata,
                 })
+            if getattr(result, 'from_finalize', False):
+                self._flush_complete.set()
         except Exception as error:
             print(f'Transcript processing failed: {error}')
 

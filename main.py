@@ -43,6 +43,7 @@ elif not _env_path.exists() and not _env_example_path.exists():
 import asyncio
 import json
 from urllib.parse import urlsplit
+from core.security import same_origin
 
 import aiofiles
 import orjson
@@ -279,7 +280,7 @@ async def security_middleware(request: Request, call_next):
         except Exception:
             return JSONResponse(status_code=403, content={"detail": "Forbidden: Malformed Origin header"})
 
-        if origin_host and origin_host.lower() not in ("127.0.0.1", "localhost", "testserver"):
+        if not same_origin(origin, request.url.scheme, host_header):
             return JSONResponse(status_code=403, content={"detail": "Forbidden: Cross-origin request rejected"})
 
     # 3. Sec-Fetch-Site validation (drop cross-site requests)

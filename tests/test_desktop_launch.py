@@ -108,7 +108,7 @@ def test_audio_callback_stops_when_its_event_loop_is_closed(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_desktop_socket_disconnect_is_handled_without_receiving_twice(monkeypatch):
-    socket = MagicMock(headers={}, accept=AsyncMock(), receive=AsyncMock(return_value={
+    socket = MagicMock(headers={'x-app-token': websocket_api.APP_SESSION_TOKEN}, accept=AsyncMock(), receive=AsyncMock(return_value={
         'type': 'websocket.disconnect', 'code': 1000}))
     session = MagicMock(session_id='desktop-test', _send_json=AsyncMock())
     manager = MagicMock()

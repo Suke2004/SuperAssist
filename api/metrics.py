@@ -49,6 +49,8 @@ class Metrics:
         self._counters: Dict[str, int] = {name: 0 for name in _KNOWN_COUNTERS}
         self._provider_errors: Dict[str, int] = {}
         self._latencies_ms = deque(maxlen=latency_window)
+        self._stage_latencies = {}
+        self._latency_window = latency_window
 
     # --- recording -----------------------------------------------------
 
@@ -81,6 +83,15 @@ class Metrics:
 
     # --- reporting -----------------------------------------------------
 
+    def record_stage_latency(self, stage: str, latency_ms: float) -> None:
+        try:
+            value = float(latency_ms)
+            if value >= 0:
+                with self._lock:
+                    self._stage_latencies.setdefault(stage, deque(maxlen=self._latency_window)).append(value)
+        except Exception:
+            pass
+
     @staticmethod
     def _percentile(sorted_values, pct: float) -> Optional[float]:
         if not sorted_values:
@@ -94,6 +105,7 @@ class Metrics:
             counters = dict(self._counters)
             provider_errors = dict(self._provider_errors)
             latencies = list(self._latencies_ms)
+            stages = {stage: sorted(values) for stage, values in self._stage_latencies.items()}
         latencies.sort()
         return {
             "version": APP_VERSION,
@@ -106,6 +118,9 @@ class Metrics:
                 "p95": self._percentile(latencies, 0.95),
                 "max": latencies[-1] if latencies else None,
             },
+            "stage_latency_ms": {stage: {"count": len(values),
+                "p50": self._percentile(values, .50), "p95": self._percentile(values, .95),
+                "max": values[-1] if values else None} for stage, values in stages.items()},
         }
 
     def save_to_disk(self, filepath: Optional[str] = None) -> None:

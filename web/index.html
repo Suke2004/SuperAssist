@@ -29,6 +29,7 @@
             <button class="workspace-nav" data-workspace-tab="ai-setup-tab"><span aria-hidden="true">◎</span> AI models</button>
             <button class="workspace-nav" data-workspace-tab="advanced-config-tab"><span aria-hidden="true">⚙</span> Connections</button>
             <button class="workspace-nav" data-workspace-tab="commands-tab"><span aria-hidden="true">⌘</span> Keyboard shortcuts</button>
+            <button class="workspace-nav" id="session-history-btn"><span aria-hidden="true">◷</span> Session history</button>
         </nav>
         <div class="sidebar-note"><span class="connection-dot"></span> Your own AI engines<p>Personalized answers, powered by your connected providers.</p></div>
         <div class="sidebar-footer"><span class="avatar">V</span><div>Personal workspace<small>Local desktop app</small></div></div>
@@ -55,18 +56,20 @@
             <div class="tab-content">
                 <!-- Tab 1: Profile -->
                 <div id="profile-tab" class="tab-pane active">
+                    <label for="session-mode">Session type</label>
+                    <select id="session-mode"><option value="interview">Interview</option><option value="call">Regular call</option></select>
                     <div class="onboarding-grid">
                         <fieldset class="grid-span-1">
                             <legend>Your interview <button type="button" id="fill-demo-btn" class="demo-fill-btn">Try sample details</button></legend>
                             <label for="user-name">Your name</label>
-                            <input type="text" id="user-name" placeholder="Your Name" required>
+                            <input type="text" id="user-name" maxlength="200" placeholder="Your Name" required>
                             <label for="user-company">Company</label>
-                            <input type="text" id="user-company" placeholder="Company You're Interviewing With"
+                            <input type="text" id="user-company" maxlength="200" placeholder="Company You're Interviewing With"
                                 required>
                             <label for="user-role">Target role</label>
-                            <input type="text" id="user-role" placeholder="Target Role" required>
+                            <input type="text" id="user-role" maxlength="200" placeholder="Target Role" required>
                             <label for="user-resume">Resume / CV</label>
-                            <textarea id="user-resume" placeholder="Paste your resume text here..." required></textarea>
+                            <textarea id="user-resume" maxlength="60000" placeholder="Paste your resume text here..." required></textarea>
                         </fieldset>
 
                         <fieldset class="grid-span-1">
@@ -84,10 +87,11 @@
                     </div>
                     <fieldset>
                         <legend>Job description</legend>
-                        <textarea id="user-objectives"
+                        <textarea id="user-objectives" maxlength="60000"
                             placeholder="Paste the job description or key requirements here to give the AI context."></textarea>
                     </fieldset>
                     <fieldset><legend>Instructions for your assistant</legend><label for="user-instructions">How would you like to answer?</label><textarea id="user-instructions" maxlength="12000" placeholder="For example: Keep answers concise. Use STAR for behavioral questions. Focus on my experience leading backend projects."></textarea><small class="config-hint">Your resume, job description, and instructions guide every answer.</small></fieldset>
+                    <fieldset><legend>Reference documents (optional)</legend><label for="session-documents">Add text or Markdown files</label><input id="session-documents" type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" multiple><p class="config-hint">Up to 8 files, 60,000 characters each and 120,000 characters total. File contents are sent to your selected AI engine as context.</p><p id="session-documents-status" role="status">No documents added.</p></fieldset>
                     <p id="session-validation" role="alert" hidden></p>
                 </div>
 
@@ -356,7 +360,7 @@
             <!-- Header -->
             <div class="live-header">
                 <div class="live-status">
-                    <span class="connection-dot"></span><div><strong id="live-session-title">Interview session</strong><small>VeyraCue <span id="session-timer">00:00</span></small></div>
+                    <span class="connection-dot"></span><div><strong id="live-session-title">Interview session</strong><small><span id="live-session-status" role="status">Starting</span> <span id="session-timer">00:00</span></small></div>
                 </div>
                 <div class="header-controls">
                     <button id="answer-btn" class="primary-action">Answer</button>
@@ -366,8 +370,9 @@
                         <summary>More</summary>
                         <div class="live-more-menu">
                             <button id="export-transcript-btn" title="Save the session transcript">Save transcript</button>
-                            <button id="mute-btn" class="mute-btn" title="Mute Microphone (Ctrl+Shift+Win+M)"><span class="mute-text">Mute microphone</span></button>
-                            <button id="pause-btn" class="pause-btn" title="Pause/Resume AI Listening (Ctrl+Shift+Win+U)"><span class="pause-text">Pause</span></button>
+                            <button id="mute-btn" class="mute-btn" aria-pressed="false" title="Mute Microphone (Ctrl+Shift+Win+M)"><span class="mute-text">Mute microphone</span></button>
+                            <button id="pause-btn" class="pause-btn" aria-pressed="false" title="Pause/Resume AI Listening (Ctrl+Shift+Win+U)"><span class="pause-text">Pause</span></button>
+                            <label for="answer-font-size">Answer text size</label><select id="answer-font-size"><option value="14">Standard</option><option value="16">Large</option><option value="18">Extra large</option></select>
                             <button id="reset-interview-btn" class="reset-btn">Clear conversation</button>
                             <div id="live-model-slot"></div>
                         </div>
@@ -383,7 +388,7 @@
             </div>
 
             <!-- Current Activity Indicator -->
-            <div class="activity-indicator" id="activity-indicator">
+            <div class="activity-indicator" id="activity-indicator" role="status">
                 <div class="listening-state">
                     <span class="stealth-indicator-dot"></span>
                     <span class="stealth-indicator-text">Listening to the conversation</span>
@@ -391,6 +396,16 @@
             </div>
         </div>
     </div>
+
+    <div id="completion-view" class="view"><div class="container">
+        <span class="page-kicker">Session review</span><h1 id="session-review-title">Session complete</h1>
+        <p id="session-save-status" role="status"></p>
+        <div class="review-actions"><button id="session-retry-save" hidden>Retry save</button><button id="session-export-btn">Export transcript</button><button id="session-summary-btn">Generate AI summary</button><button id="session-new-btn">New session</button></div>
+        <fieldset><legend>Summary</legend><p id="session-summary" role="status"></p></fieldset>
+        <p id="session-unsent-draft"></p>
+        <fieldset><legend>Conversation and answers</legend><div id="session-review-events"></div></fieldset>
+    </div></div>
+    <div id="history-view" class="view"><div class="container"><span class="page-kicker">Your workspace</span><h1>Saved sessions</h1><p class="subtitle">Open a session to review its conversation, answers, and summary.</p><div id="session-history-list" role="status"></div></div></div>
 
     <div id="audio-health" class="audio-health" role="status" hidden>Audio is starting…</div>
     <script type="module" src="/static/js/preset-manager.js"></script>

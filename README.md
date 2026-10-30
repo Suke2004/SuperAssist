@@ -10,6 +10,10 @@ On macOS/Linux, use `bash run.sh` or `bash run.sh --silent` for background start
 
 API keys remain in `.env` and `ai_providers.json`. Only providers with usable configured keys appear in the setup. Existing Deepgram and answer/vision engines are reused; no Parakeet account or subscription is required.
 
+Choose **Interview** or **Regular call** during setup. Regular calls do not require a resume or interview details. Attach up to eight `.txt`/`.md` documents (60,000 characters per file, 120,000 total); the assistant selects relevant passages and includes source IDs. Answer text size is adjustable in the live workspace.
+
+Finalized speech, questions, answers, and screenshot analyses are checkpointed locally in `exports/sessions/` as JSON. **End** stops capture and saves a complete TXT export before showing the review screen. A save failure preserves the current record and offers retry. **Session history** opens saved records; **Generate AI summary** makes an explicit request to a configured engine and adds notes without replacing the raw record. These files contain conversation/profile content; API credentials are excluded. Live audio is not automatically restored after an app restart.
+
 1. Add your name, target role/company, resume, job description, and answer preferences.
 2. Continue to audio setup and choose **Windows direct audio**.
 3. Select the same headphones or speakers used by your meeting. The default option displays the current Windows output name.
@@ -73,6 +77,8 @@ Linux uses the same table with Ctrl+Shift+Super. Global controls require X11; Wa
 ## Reliability and limits
 
 Final speech segments are combined across pauses. Nova-3 receives bounded technical vocabulary without blind word replacements. The answer engine uses conversation context to interpret imperfect English and asks a brief clarification when meaning is ambiguous. Raw transcripts remain available for export.
+
+Speech endpointing waits one second of silence, followed by a 200 ms continuation check before auto-answering. Continued speech cancels a pending answer. Streaming answers render at most once per browser frame and preserve your reading position; scroll to the bottom or use the down-arrow button to follow the latest text. Interview controls keep the arrow cursor while remaining clickable.
 
 Capture is tied to the chosen playback device. It includes other sound on that device and cannot recover playback sent elsewhere. Recognition can still vary with accents, noise, unclear wording, and network outages. Reconnection queues are bounded; long outages can lose speech. Separate microphone and output transcription streams can incur separate provider usage.
 

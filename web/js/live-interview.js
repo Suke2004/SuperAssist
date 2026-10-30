@@ -20,21 +20,20 @@ class LiveInterviewUI {
         this.currentCandidateInterimBase = ''; // M1: finalized text of the open candidate interim
         this.currentAIElement = null; // Track AI message separately
         this.isStreaming = false;
+        this.pendingStreamingChunk = '';
+        this.streamingFrame = null;
         this.eventsInitialized = false;
+        this.sessionStatus = 'starting';
         
         // Enhanced smart scroll management
         this.scrollState = {
             mode: 'live_bottom',           // 'live_bottom', 'ai_start', 'user_reading'
             userReadingMode: false,        // User has intentionally scrolled up to read
-            lastUserScrollTime: 0,         // When user last scrolled
-            lastUserScrollDirection: 'down', // 'up' or 'down'
-            consecutiveUpScrolls: 0,       // Count of consecutive up scrolls (indicates intent)
             aiResponseStartElement: null,  // Reference to current AI response element
             isLiveSpeaking: false,         // Whether someone is currently speaking
             lastScrollPosition: 0,         // Track scroll position changes
             isNearBottom: true,            // Is the scroll position near the bottom?
             bottomThreshold: 100,          // Pixels from bottom to consider "near bottom"
-            readingThreshold: 200,         // Pixels scrolled up to consider "reading mode"
             newContentPending: false,      // New content arrived while user is reading
             resumeScrollButton: null,      // Reference to resume button
         };
@@ -120,61 +119,21 @@ class LiveInterviewUI {
 
     handleScrollEvent() {
         const { scrollTop, scrollHeight, clientHeight } = this.conversationStream;
-        const currentPosition = scrollTop;
-        const maxScrollTop = scrollHeight - clientHeight;
-        
-        // Determine scroll direction
-        const direction = currentPosition > this.scrollState.lastScrollPosition ? 'down' : 'up';
-        
-        // Update state
-        this.scrollState.lastScrollPosition = currentPosition;
-        this.scrollState.lastUserScrollTime = Date.now();
-        this.scrollState.isNearBottom = currentPosition >= maxScrollTop - this.scrollState.bottomThreshold;
-        
-        // Track scroll direction changes
-        // U2 fix: intent decay — up-scrolls minutes apart are not intent.
-        // If the last scroll was long ago, the streak restarts.
-        const now = Date.now();
-        if (now - this.scrollState.lastUserScrollTime > 5000) {
-            this.scrollState.consecutiveUpScrolls = direction === 'up' ? 1 : 0;
-        } else if (direction !== this.scrollState.lastUserScrollDirection) {
-            this.scrollState.consecutiveUpScrolls = direction === 'up' ? 1 : 0;
-        } else if (direction === 'up') {
-            this.scrollState.consecutiveUpScrolls++;
-        }
-        this.scrollState.lastUserScrollTime = now;
-        
-        this.scrollState.lastUserScrollDirection = direction;
-        
-        // Determine if user is intentionally reading (scrolled up significantly)
-        const distanceFromBottom = maxScrollTop - currentPosition;
-        const wasInReadingMode = this.scrollState.userReadingMode;
-        
-        if (distanceFromBottom > this.scrollState.readingThreshold && this.scrollState.consecutiveUpScrolls >= 2) {
-            // User has scrolled up intentionally (multiple up scrolls + significant distance)
+        const previousPosition = this.scrollState.lastScrollPosition;
+        const distanceFromBottom = scrollHeight - clientHeight - scrollTop;
+        this.scrollState.lastScrollPosition = scrollTop;
+        this.scrollState.isNearBottom = distanceFromBottom <= this.scrollState.bottomThreshold;
+
+        if (scrollTop < previousPosition - 1) {
             this.enterReadingMode();
-        } else if (this.scrollState.isNearBottom && this.scrollState.userReadingMode) {
-            // User has returned to bottom - exit reading mode
+        } else if (scrollTop > previousPosition && distanceFromBottom <= 2) {
+            // Resume only at the actual bottom, not after a small upward scroll.
             this.exitReadingMode();
         }
-        
     }
 
     handleWheelEvent(e) {
         if (e.deltaY < 0) this.enterReadingMode();
-        // Additional intent detection: rapid up scrolls indicate reading intent
-        // U2 fix: a stale streak (last scroll >5s ago) doesn't count as intent.
-        if (e.deltaY < 0) { // Scrolling up
-            if (Date.now() - this.scrollState.lastUserScrollTime <= 5000) {
-                this.scrollState.consecutiveUpScrolls++;
-            } else {
-                this.scrollState.consecutiveUpScrolls = 1;
-            }
-            this.scrollState.lastUserScrollTime = Date.now();
-        } else {
-            this.scrollState.consecutiveUpScrolls = 0;
-            this.scrollState.lastUserScrollTime = Date.now();
-        }
     }
 
     enterReadingMode() {
@@ -352,17 +311,26 @@ class LiveInterviewUI {
         });
     }
 
+    setSessionStatus(status) {
+        this.sessionStatus = status;
+        this.showActivity();
+    }
+
     // Show activity indicator
     showActivity(text = 'Listening...') {
         if (!this.activityIndicator) return;
 
         const status = muteManager.getMuteStatus();
         let indicatorText = text;
+        const labels = { starting: 'Starting audio…', reconnecting: 'Reconnecting — transcription interrupted', stopped: 'Stopped', failed: 'Audio startup failed' };
+        const header = document.getElementById('live-session-status');
+        if (header) header.textContent = labels[this.sessionStatus] || (status.universal ? 'Paused' : status.microphone ? 'Listening · microphone muted' : 'Listening');
+        if (labels[this.sessionStatus]) indicatorText = labels[this.sessionStatus];
         
-        if (status.universal) {
+        if (status.universal && this.sessionStatus === 'listening') {
             indicatorText = '⏸️ System Paused - Press Ctrl+Shift+Win+U to resume';
             this.activityIndicator.classList.add('paused');
-        } else if (status.microphone) {
+        } else if (status.microphone && this.sessionStatus === 'listening') {
             indicatorText = '🔇 Microphone Muted - Press Ctrl+Shift+Win+M to unmute';
             this.activityIndicator.classList.remove('paused');
         } else {
@@ -381,6 +349,7 @@ class LiveInterviewUI {
 
     // Add interviewer question
     addInterviewerQuestion(question, isInterim = false) {
+        this.pendingQuestion = question;
         // Live speech is high priority - but respect reading mode
         if (!this.scrollState.userReadingMode) {
             this.setScrollMode('live_bottom');
@@ -1092,6 +1061,7 @@ class LiveInterviewUI {
         }
         if (this.conversationStream) {
             this.conversationStream.scrollTop = this.conversationStream.scrollHeight;
+            this.scrollState.lastScrollPosition = this.conversationStream.scrollTop;
         }
     }
 
@@ -1120,6 +1090,7 @@ class LiveInterviewUI {
     // Discard a partially-streamed answer (provider fallback took over) and
     // prepare a clean streaming element for the replacement answer.
     resetStreamingResponse() {
+        this.cancelStreamingFrame();
         if (this.currentStreamingElement) {
             this.currentStreamingElement.remove();
             this.currentStreamingElement = null;
@@ -1127,6 +1098,7 @@ class LiveInterviewUI {
         }
         this.markdownParser.reset();
         this.updateEmptyState();
+        this.startStreamingAIResponse({ question: this.answerQuestion || this.pendingQuestion });
         console.log('🧹 Partial AI response discarded — provider fallback stream starting fresh');
     }
 
@@ -1145,7 +1117,15 @@ class LiveInterviewUI {
         
         // Create NEW AI response element for each response
         this.currentStreamingElement = this.createMessageElement('', 'ai-response');
+        this.answerQuestion = metadata.question || this.pendingQuestion || '';
+        if (this.answerQuestion) {
+            const question = document.createElement('p');
+            question.className = 'answer-question';
+            question.textContent = this.answerQuestion;
+            this.currentStreamingElement.insertBefore(question, this.currentStreamingElement.querySelector('.streaming-text'));
+        }
         this.conversationStream.appendChild(this.currentStreamingElement);
+        window.dispatchEvent(new CustomEvent('superassist:answer-started'));
         
         // Get content div for streaming
         this.currentStreamingContent = this.currentStreamingElement.querySelector('.streaming-text');
@@ -1169,7 +1149,25 @@ class LiveInterviewUI {
             console.warn('⚠️ No active streaming element for chunk');
             return;
         }
-        
+        this.pendingStreamingChunk += chunk;
+        if (this.streamingFrame === null) {
+            this.streamingFrame = requestAnimationFrame(() => this.flushStreamingChunk());
+        }
+    }
+
+    cancelStreamingFrame() {
+        if (this.streamingFrame !== null) cancelAnimationFrame(this.streamingFrame);
+        this.streamingFrame = null;
+        this.pendingStreamingChunk = '';
+    }
+
+    flushStreamingChunk() {
+        const chunk = this.pendingStreamingChunk;
+        this.cancelStreamingFrame();
+        if (!chunk || !this.currentStreamingContent) return;
+        const followBottom = !this.scrollState.userReadingMode && this.isUserNearBottom();
+        const readingPosition = this.conversationStream.scrollTop;
+
         // Remove streaming indicator on first chunk
         const indicator = this.currentStreamingContent.querySelector('.streaming-indicator');
         if (indicator) {
@@ -1183,15 +1181,18 @@ class LiveInterviewUI {
         // Update content with rendered HTML
         this.currentStreamingContent.innerHTML = renderedHTML;
         
-        // Auto-scroll if user is near bottom
-        if (this.isUserNearBottom()) {
+        if (followBottom) {
             this.scrollToBottom();
+        } else {
+            this.conversationStream.scrollTop = readingPosition;
         }
     }
 
     // Finalize streaming response
     finalizeStreamingResponse(metadata = {}) {
         console.log('✅ Finalizing real-time streaming...');
+        this.flushStreamingChunk();
+        const readingPosition = this.conversationStream?.scrollTop;
         
         if (this.currentStreamingElement) {
             // Mark as complete (this will re-enable text selection via CSS)
@@ -1255,6 +1256,10 @@ class LiveInterviewUI {
             
             // Show listening indicator after response is complete
             this.showActivity('Listening...');
+
+            if (this.scrollState.userReadingMode) {
+                this.conversationStream.scrollTop = readingPosition;
+            }
 
         } else {
             console.warn('⚠️ No streaming element to finalize');
@@ -1346,6 +1351,7 @@ class LiveInterviewUI {
 
     // Clear conversation
     clearConversation() {
+        this.cancelStreamingFrame();
         if (this.conversationStream) {
             this.conversationStream.innerHTML = '';
         }
@@ -1412,6 +1418,7 @@ class LiveInterviewUI {
     // Update mute button appearance
     updateMuteButton(isMuted) {
         if (this.muteButton) {
+            this.muteButton.setAttribute('aria-pressed', String(isMuted));
             const textSpan = this.muteButton.querySelector('.mute-text');
             if (isMuted) {
                 this.muteButton.classList.add('muted');
@@ -1428,6 +1435,7 @@ class LiveInterviewUI {
     // Update pause button appearance
     updatePauseButton(isPaused) {
         if (this.pauseButton) {
+            this.pauseButton.setAttribute('aria-pressed', String(isPaused));
             const textSpan = this.pauseButton.querySelector('.pause-text');
             if (isPaused) {
                 this.pauseButton.classList.add('paused');
@@ -1472,15 +1480,11 @@ class LiveInterviewUI {
         this.scrollState = {
             mode: 'live_bottom',
             userReadingMode: false,
-            lastUserScrollTime: 0,
-            lastUserScrollDirection: 'down',
-            consecutiveUpScrolls: 0,
             aiResponseStartElement: null,
             isLiveSpeaking: false,
             lastScrollPosition: 0,
             isNearBottom: true,
             bottomThreshold: 100,
-            readingThreshold: 200,
             newContentPending: false,
             resumeScrollButton: this.scrollState?.resumeScrollButton || null, // Preserve button reference
         };

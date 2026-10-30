@@ -19,6 +19,7 @@ import screenshotService from './screenshot-service.js';
 import { ConfigManager } from './config-manager.js';
 import { updatePlatformHelp } from './platform.js';
 import { testStreamingMarkdown, testSampleMarkdown } from './streaming-markdown-demo.js';
+import { SessionReview } from './session-review.js';
 
 // Initialize managers
 const stateManager = new StateManager();
@@ -41,6 +42,8 @@ const views = {
     onboarding: document.getElementById('onboarding-view'),
     preflight: document.getElementById('preflight-view'),
     live: document.getElementById('live-view'),
+    completion: document.getElementById('completion-view'),
+    history: document.getElementById('history-view'),
 };
 
 const micSelect = document.getElementById('mic-select');
@@ -50,6 +53,8 @@ const backButton = document.getElementById('back-to-onboarding-btn');
 let sessionTimer;
 let sessionStartedAt;
 let nativeAudioInfo = {};
+let savingSession = false;
+const sessionReview = new SessionReview(switchView, webSocketHandler);
 
 // --- Tab Management ---
 function setupTabs() {
@@ -104,7 +109,9 @@ function handleOnboarding() {
         switchView('preflight');
         runPreFlightChecks();
     } else {
-        validation.textContent = 'Add your name, company, role, and resume, then choose an interview focus and AI model.';
+        validation.textContent = document.getElementById('session-mode').value === 'call'
+            ? 'Choose your AI provider and model. Optional secondary and vision providers also need a model.'
+            : 'Add your name, company, role, and resume, then choose an interview focus and AI model. Optional providers also need a model.';
         validation.hidden = false;
     }
 }
@@ -171,6 +178,8 @@ async function startInterview() {
     switchView('live');
     liveInterviewUI.init();
     liveInterviewUI.initialize();
+    liveInterviewUI.setSessionStatus('starting');
+    window.dispatchEvent(new CustomEvent('superassist:answer-complete', { detail: { success: true } }));
     hotkeyManager.setEnabled(true);
 
     // A4: surface device-loss events from audio_handler as visible warnings —
@@ -233,7 +242,7 @@ async function startInterview() {
     } catch (error) {
         stopAudioProcessing();
         hotkeyManager.setEnabled(false);
-        webSocketHandler.endInterview();
+        liveInterviewUI.setSessionStatus('failed');
         switchView('preflight');
         const notice = document.getElementById('audio-setup-error');
         notice.textContent = `Session could not start: ${error.message}. Check the selected output or use browser capture.`;
@@ -241,7 +250,8 @@ async function startInterview() {
         await webSocketHandler.connect();
         return;
     }
-    document.getElementById('live-session-title').textContent = `${stateManager.appState.onboardingData.role} at ${stateManager.appState.onboardingData.company}`;
+    document.getElementById('live-session-title').textContent = stateManager.appState.onboardingData.mode === 'call'
+        ? 'Regular call' : `${stateManager.appState.onboardingData.role} at ${stateManager.appState.onboardingData.company}`;
     webSocketHandler.sendMessage('set_auto_answer', { enabled: document.getElementById('auto-answer-toggle').checked });
     sessionStartedAt = Date.now();
     clearInterval(sessionTimer);
@@ -252,39 +262,39 @@ async function startInterview() {
 }
 
 async function endInterview() {
+    if (savingSession) return;
+    savingSession = true;
     clearInterval(sessionTimer);
-    document.getElementById('session-timer').textContent = '00:00';
-    console.log('🔚 Ending interview and clearing state...');
-
-    // P3: save the turn-by-turn transcript before the session is torn down.
-    try { await webSocketHandler.exportTranscript(); } catch (e) { console.warn('Transcript export skipped:', e); }
-
-    // Stop all audio processing
     stopAudioProcessing();
-
-    // Send end interview signal to backend
-    webSocketHandler.endInterview();
-
-    // Disable hotkeys
     hotkeyManager.setEnabled(false);
-
-    // Clear conversation UI
-    if (window.liveInterviewUI) {
-        liveInterviewUI.clearConversation();
+    liveInterviewUI.setSessionStatus('stopped');
+    const record = sessionReview.unsaved ? sessionReview.record : {
+        session_id: webSocketHandler.session_id,
+        context: stateManager.appState.onboardingData,
+        started_at: sessionStartedAt ? new Date(sessionStartedAt).toISOString() : new Date().toISOString(),
+        events: Array.from(document.querySelectorAll('#transcript-stream .message, #conversation-stream .message')).map(message => ({
+            type: message.classList.contains('ai-response') ? 'answer' : 'transcript',
+            speaker: message.querySelector('.label')?.textContent || '',
+            question: message.querySelector('.answer-question')?.textContent || '',
+            text: message.querySelector('.streaming-text')?.textContent || message.textContent,
+        })),
+    };
+    const endButton = document.getElementById('end-interview-btn');
+    const retry = document.getElementById('session-retry-save');
+    endButton.disabled = retry.disabled = true;
+    endButton.textContent = 'Saving…';
+    try {
+        const result = await webSocketHandler.endInterview();
+        stateManager.clearInterviewState();
+        window.presetManager?.clearNotifications?.();
+        sessionReview.show(result.record || record, { path: result.path });
+    } catch (error) {
+        sessionReview.show(record, { unsaved: true, error: error.message });
+    } finally {
+        savingSession = false;
+        endButton.disabled = retry.disabled = false;
+        endButton.textContent = 'End';
     }
-
-    // Comprehensive state clearing
-    stateManager.clearInterviewState();
-
-    // Reset preset manager if available
-    if (window.presetManager) {
-        presetManager.clearNotifications?.();
-    }
-
-    // Switch back to onboarding
-    switchView('onboarding');
-
-    console.log('✅ Interview ended and state cleared successfully');
 }
 
 async function resetInterview() {
@@ -352,6 +362,38 @@ function toggleUniversalMute() {
 
 // --- Event Listeners ---
 function setupEventListeners() {
+    document.getElementById('session-mode').addEventListener('change', event => {
+        const interview = event.target.value === 'interview';
+        for (const id of ['user-name', 'user-company', 'user-role', 'user-resume']) document.getElementById(id).required = interview;
+        document.getElementById('user-objectives').closest('fieldset').querySelector('legend').textContent = interview ? 'Job description' : 'Meeting context';
+        document.getElementById('user-objectives').placeholder = interview ? 'Paste the job description or key requirements here.' : 'Add meeting goals, an agenda, or background (optional).';
+    });
+    document.getElementById('session-documents').addEventListener('change', async event => {
+        const status = document.getElementById('session-documents-status');
+        const files = Array.from(event.target.files || []);
+        proceedButton.disabled = true;
+        stateManager.documents = [];
+        try {
+            if (files.length > 8) throw new Error('Select up to 8 files.');
+            let total = 0;
+            const documents = [];
+            for (const file of files) {
+                if (!/\.(txt|md|markdown)$/i.test(file.name)) throw new Error('Only text (.txt) and Markdown (.md) files are supported.');
+                if (file.name.length > 200 || file.size > 240000) throw new Error(`${file.name}: file is too large.`);
+                const text = await file.text();
+                total += text.length;
+                if (text.length > 60000 || total > 120000) throw new Error('Documents exceed the 60,000-character per file or 120,000-character total limit.');
+                if (text.includes('\0')) throw new Error(`${file.name}: choose a text file.`);
+                documents.push({ name: file.name, text });
+            }
+            stateManager.documents = documents;
+            status.textContent = documents.length ? `Added ${documents.map(item => item.name).join(', ')} (${total.toLocaleString()} characters).` : 'No documents added.';
+        } catch (error) { event.target.value = ''; status.textContent = `${error.message} No documents added.`; }
+        finally { proceedButton.disabled = false; }
+    });
+    document.getElementById('answer-font-size').addEventListener('change', event => {
+        document.documentElement.style.setProperty('--answer-font-size', `${event.target.value}px`);
+    });
     proceedButton?.addEventListener('click', handleOnboarding);
     startButton?.addEventListener('click', startInterview);
     backButton?.addEventListener('click', () => switchView('onboarding'));
@@ -372,6 +414,7 @@ function setupEventListeners() {
     });
     document.querySelectorAll('[data-workspace-tab]').forEach(button => {
         button.addEventListener('click', () => {
+            if (sessionReview.unsaved) { sessionReview.show(sessionReview.record, { unsaved: true, error: 'The previous save did not complete' }); return; }
             if (stateManager.isLiveInterviewActive()) {
                 liveInterviewUI.addMessage('End this session before changing session settings.', 'system-message');
                 return;
@@ -381,7 +424,30 @@ function setupEventListeners() {
             document.querySelectorAll('.workspace-nav').forEach(item => item.classList.toggle('active', item === button));
         });
     });
-    document.getElementById('answer-btn').addEventListener('click', () => webSocketHandler.sendMessage('request_answer', {}));
+    let answerPending = false;
+    let pendingChat = '';
+    const finishAnswer = event => {
+        if (event.detail?.success === false && pendingChat) {
+            const input = document.getElementById('chat-question');
+            input.value = input.value ? `${pendingChat}\n${input.value}` : pendingChat;
+        }
+        pendingChat = '';
+        answerPending = false;
+        document.getElementById('answer-btn').disabled = false;
+        document.querySelector('#chat-form button').disabled = false;
+    };
+    window.addEventListener('superassist:answer-complete', finishAnswer);
+    window.addEventListener('superassist:answer-started', () => {
+        answerPending = true;
+        document.getElementById('answer-btn').disabled = true;
+        document.querySelector('#chat-form button').disabled = true;
+    });
+    document.getElementById('answer-btn').addEventListener('click', () => {
+        if (answerPending) return;
+        if (!webSocketHandler.sendMessage('request_answer', {})) { liveInterviewUI.addMessage('Connection unavailable. Retry when reconnected.', 'system-error'); return; }
+        answerPending = true;
+        document.getElementById('answer-btn').disabled = true;
+    });
     const moreMenu = document.querySelector('.live-more');
     document.addEventListener('click', event => {
         if (!moreMenu.contains(event.target) || event.target.closest('.live-more-menu button')) moreMenu.open = false;
@@ -400,9 +466,14 @@ function setupEventListeners() {
         event.preventDefault();
         const input = document.getElementById('chat-question');
         const question = input.value.trim();
-        if (!question || !webSocketHandler.socket || webSocketHandler.socket.readyState !== WebSocket.OPEN) return;
-        webSocketHandler.sendMessage('ask_question', { question });
+        if (!question || answerPending) return;
+        if (!webSocketHandler.sendMessage('ask_question', { question })) { liveInterviewUI.addMessage('Connection unavailable. Your draft is kept; retry when reconnected.', 'system-error'); return; }
+        answerPending = true;
+        pendingChat = question;
+        document.querySelector('#chat-form button').disabled = true;
+        document.getElementById('answer-btn').disabled = true;
         liveInterviewUI.addMessage(question, 'candidate');
+        liveInterviewUI.pendingQuestion = question;
         input.value = '';
     });
     document.getElementById('export-transcript-btn').addEventListener('click', async () => {

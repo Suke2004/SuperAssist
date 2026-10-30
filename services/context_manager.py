@@ -19,7 +19,7 @@ def filter_thinking_content(content: str) -> str:
 class PersistentContextManager:
     """
     Manages persistent candidate context that is ALWAYS present in AI prompts.
-    No token limits - includes complete resume and job description.
+    Keeps full source documents and bounded conversation context.
     """
     
     def __init__(self):
@@ -32,14 +32,24 @@ class PersistentContextManager:
             'focus_areas': [],
             'selected_languages': [],
             'additional_context': {},
+            'documents': [],
+            'session_mode': 'interview',
+            'candidate_fact_memory': [],
             'created_at': None
         }
         self.conversation_history = []  # Limited to MAX_CONVERSATION_HISTORY exchanges
         self.vision_analyses: list = []  # M2: vision analyses kept separate from AI answers
         self.is_initialized = False
+        self._fact_count = 0
     
     def initialize_persistent_context(self, onboarding_data: dict):
         """Initialize persistent context from onboarding data - called once per interview"""
+        documents = onboarding_data.get('documents', [])
+        if not isinstance(documents, list) or any(
+            not isinstance(doc, dict) or not isinstance(doc.get('name'), str)
+            or not isinstance(doc.get('text'), str) for doc in documents
+        ):
+            raise ValueError("Documents must be a list of objects with string name and text")
         languages = onboarding_data.get('selectedLanguages', []) or onboarding_data.get('selected_languages', [])
         if isinstance(languages, str):
             languages = [languages]
@@ -53,6 +63,8 @@ class PersistentContextManager:
             'focus_areas': onboarding_data.get('focus', []),
             'selected_languages': languages,
             'custom_instructions': onboarding_data.get('instructions', ''),
+            'documents': [{'name': doc['name'], 'text': doc['text']} for doc in documents],
+            'session_mode': 'regular' if onboarding_data.get('session_mode') == 'regular' else 'interview',
             'created_at': datetime.now().isoformat()
         })
         self.is_initialized = True
@@ -70,13 +82,15 @@ class PersistentContextManager:
             return
         # If we are only getting a candidate response, add it to the last exchange.
         elif interviewer_question is None and candidate_response and self.conversation_history:
-            self.conversation_history[-1]['candidate_response'] = candidate_response
+            previous = self.conversation_history[-1].get('candidate_response') or ''
+            self.conversation_history[-1]['candidate_response'] = (previous + ' ' + candidate_response).strip()
             return
         
         # If the last exchange was for the EXACT SAME question (e.g. retry or fallback), update it instead of duplicating
         if interviewer_question and self.conversation_history and self.conversation_history[-1].get('interviewer_question') == interviewer_question:
             if candidate_response:
-                self.conversation_history[-1]['candidate_response'] = candidate_response
+                previous = self.conversation_history[-1].get('candidate_response') or ''
+                self.conversation_history[-1]['candidate_response'] = (previous + ' ' + candidate_response).strip()
             if filtered_ai_response:
                 self.conversation_history[-1]['ai_response'] = filtered_ai_response
             return
@@ -89,10 +103,20 @@ class PersistentContextManager:
         }
         self.conversation_history.append(exchange)
 
-        # Keep only last MAX_CONVERSATION_HISTORY exchanges
-        max_history = getattr(settings, 'MAX_CONVERSATION_HISTORY', 5) or 5
-        if len(self.conversation_history) > max_history:
-            self.conversation_history = self.conversation_history[-max_history:]
+        self._trim_history()
+
+    def _trim_history(self):
+        max_history = max(1, getattr(settings, 'MAX_CONVERSATION_HISTORY', 5) or 5)
+        evicted = self.conversation_history[:-max_history]
+        memory = self.persistent_context['candidate_fact_memory']
+        for exchange in evicted:
+            response = exchange.get('candidate_response')
+            if response:
+                self._fact_count += 1
+                # shortcut: keep eight verbatim excerpts, upgrade for semantic long-term recall.
+                memory.append({'source_id': f'candidate:{self._fact_count}', 'text': response[:600]})
+        del memory[:-8]
+        self.conversation_history = self.conversation_history[-max_history:]
     
     def add_ai_response(self, ai_response: str, response_type: str = "normal"):
         """Add AI response to conversation history"""
@@ -129,10 +153,7 @@ class PersistentContextManager:
             }
             self.conversation_history.append(exchange)
         
-        # Keep only last MAX_CONVERSATION_HISTORY exchanges
-        max_history = settings.MAX_CONVERSATION_HISTORY
-        if len(self.conversation_history) > max_history:
-            self.conversation_history = self.conversation_history[-max_history:]
+        self._trim_history()
         
         print(f"✅ AI response added to conversation history (type: {response_type}, total exchanges: {len(self.conversation_history)})")
     
@@ -220,4 +241,6 @@ class PersistentContextManager:
         """Resets the conversation history."""
         self.conversation_history = []
         self.vision_analyses = []
+        self.persistent_context['candidate_fact_memory'] = []
+        self._fact_count = 0
         print("🔄 Conversation history reset")

@@ -95,8 +95,8 @@ async def test_unix_session_uses_two_independent_native_sources(monkeypatch, pla
     monkeypatch.setattr(portable_audio, 'PortableCapture', factory)
     monkeypatch.setattr(session_manager, 'DeepgramManager', MagicMock(side_effect=managers))
     monkeypatch.setattr(session_manager, 'MultiLLMManager', MagicMock())
-    monkeypatch.setattr(session_manager.vision_service, 'set_context_manager', MagicMock())
-    monkeypatch.setattr(session_manager.vision_service, 'load_vision_providers', MagicMock())
+    monkeypatch.setattr(session_manager.VisionService, 'set_context_manager', MagicMock())
+    monkeypatch.setattr(session_manager.VisionService, 'load_vision_providers', MagicMock())
     await session.initialize_managers({}, None, None, None, {})
     assert factory.call_args_list[1].kwargs == {'microphone': True}
     assert factory.call_args_list[1].args[2] == 'microphone-id'
