@@ -32,11 +32,11 @@ if [[ -z "$APP_UV" ]]; then
     fi
 fi
 
-APP_SYNC_FLAGS=()
+APP_REINSTALL=''
 if [[ "${1:-}" == --update || "${1:-}" == --install ]]; then
-    APP_SYNC_FLAGS+=(--reinstall)
+    APP_REINSTALL=1
 fi
 echo 'Preparing managed Python 3.12 and locked dependencies...'
-"$APP_UV" sync --locked --no-dev --managed-python --python 3.12 "${APP_SYNC_FLAGS[@]}"
+"$APP_UV" sync --locked --no-dev --managed-python --python 3.12 ${APP_REINSTALL:+--reinstall}
 echo 'Starting VeyraCue. Setup instructions: CROSS_PLATFORM.md'
 exec "$APP_DIR/.venv/bin/python" main.py

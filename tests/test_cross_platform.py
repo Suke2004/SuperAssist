@@ -8,6 +8,8 @@ import subprocess
 import time
 from array import array
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Thread, current_thread, main_thread
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -237,16 +239,22 @@ def test_native_bridge_rejects_remote_pages_and_unbound_calls():
     assert api._is_local()
 
 
-def test_linux_reshowing_window_does_not_duplicate_setup_or_listeners(monkeypatch):
+@pytest.mark.parametrize('platform,dev_mode', [('linux', False), ('darwin', False), ('darwin', True)])
+def test_unix_reshowing_window_does_not_duplicate_setup_or_listeners(monkeypatch, platform, dev_mode, capsys):
     window = MagicMock()
     shown_event = window.events.shown
     manager = MagicMock()
-    monkeypatch.setattr(main, 'sys', SimpleNamespace(platform='linux'))
+    monkeypatch.setattr(main, 'sys', SimpleNamespace(platform=platform))
+    monkeypatch.setattr(main, 'DEV_MODE', dev_mode)
     monkeypatch.setattr(main.webview, 'create_window', MagicMock(return_value=window))
     monkeypatch.setattr(main.window_manager, 'window_manager', manager)
     monkeypatch.setattr(main.window_manager, 'find_aura_window', lambda: True)
     monkeypatch.setattr(main.window_manager, 'set_app_always_on_top', lambda enabled: True)
-    monkeypatch.setattr(main.window_manager, 'apply_capture_protection', lambda window: False)
+    if platform == 'linux':
+        monkeypatch.setattr(main.window_manager, 'apply_capture_protection', lambda window: False)
+    else:
+        monkeypatch.setattr(window_manager, 'IS_MACOS', True)
+        window.native.setSharingType_.side_effect = RuntimeError('Cocoa sharing unavailable')
     monkeypatch.setattr(main.time, 'sleep', lambda seconds: None)
     main.setup_webview_window()
     shown = shown_event.__iadd__.call_args.args[0]
@@ -254,6 +262,70 @@ def test_linux_reshowing_window_does_not_duplicate_setup_or_listeners(monkeypatc
     shown()
     manager.set_native_window.assert_called_once()
     manager.start_hotkey_listener.assert_called_once()
+    if platform == 'darwin':
+        if dev_mode:
+            window.native.setSharingType_.assert_not_called()
+        else:
+            window.native.setSharingType_.assert_called_once_with(0)
+            assert 'Capture exclusion unavailable: Cocoa sharing unavailable' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('sharing_type', [0, 1, None, 'error'])
+def test_macos_capture_protection_uses_ui_thread_and_checks_result(monkeypatch, sharing_type):
+    pending = Queue()
+    monkeypatch.setitem(sys.modules, 'PyObjCTools.AppHelper', SimpleNamespace(callAfter=pending.put))
+    monkeypatch.setattr(window_manager, 'IS_MACOS', True)
+    manager = MagicMock()
+    monkeypatch.setattr(window_manager, 'window_manager', manager)
+    calls = []
+
+    def set_sharing(value):
+        assert current_thread() is main_thread()
+        calls.append(('set', value))
+        if sharing_type == 'error':
+            raise RuntimeError('sharing unavailable')
+
+    def get_sharing():
+        assert current_thread() is main_thread()
+        calls.append(('get', sharing_type))
+        if sharing_type is None:
+            raise RuntimeError('verification unavailable')
+        return sharing_type
+
+    native = SimpleNamespace(setSharingType_=set_sharing, sharingType=get_sharing)
+
+    def get_window():
+        assert current_thread() is main_thread()
+        calls.append(('window', None))
+        return native
+
+    window = SimpleNamespace(native=SimpleNamespace(window=get_window))
+    results = []
+    worker = Thread(target=lambda: results.append(window_manager.apply_capture_protection(window)), daemon=True)
+    worker.start()
+    deadline = time.monotonic() + 6
+    while worker.is_alive() and time.monotonic() < deadline:
+        try:
+            pending.get(timeout=0.05)()
+        except Empty:
+            pass
+    worker.join(timeout=1)
+    assert not worker.is_alive()
+    assert results == [sharing_type == 0]
+    assert calls[:2] == [('window', None), ('set', 0)]
+    if sharing_type == 0:
+        manager.set_native_window.assert_called_once_with(native)
+    else:
+        manager.set_native_window.assert_not_called()
+
+
+def test_macos_window_dispatch_failure_does_not_raise_from_shown_callback(monkeypatch):
+    monkeypatch.setattr(window_manager, 'IS_MACOS', True)
+    monkeypatch.setattr(window_manager.threading, 'current_thread', lambda: object())
+    monkeypatch.setattr(desktop, 'call_on_macos_ui', MagicMock(side_effect=RuntimeError('UI unavailable')))
+    assert window_manager._get_macos_nswindow(SimpleNamespace()) is None
+    assert window_manager.verify_protection(SimpleNamespace()) is None
+    assert window_manager.apply_capture_protection(SimpleNamespace()) is False
 
 
 @pytest.mark.asyncio
@@ -299,9 +371,11 @@ def test_unix_launcher_uses_own_directory_and_preserves_windows_venv(tmp_path):
     assert launched.returncode == 0, launched.stderr
     assert 'desktop-started main.py' in launched.stdout and str(folder) in launched.stdout
     assert 'sync --locked --no-dev --managed-python --python 3.12' in launched.stdout
-    launched = subprocess.run(['bash', str(folder / 'run.sh'), '--update'], cwd=tmp_path,
-                              env=env, capture_output=True, text=True, timeout=10)
-    assert launched.returncode == 0 and '--reinstall' in launched.stdout
+    assert '--reinstall' not in launched.stdout
+    for mode in ('--update', '--install'):
+        launched = subprocess.run(['bash', str(folder / 'run.sh'), mode], cwd=tmp_path,
+                                  env=env, capture_output=True, text=True, timeout=10)
+        assert launched.returncode == 0 and '--reinstall' in launched.stdout
     launched = subprocess.run(['bash', str(folder / 'silent_run.sh')], cwd=tmp_path,
                               env=env, capture_output=True, text=True, timeout=10)
     assert launched.returncode == 0 and not launched.stdout

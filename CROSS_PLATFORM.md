@@ -11,7 +11,7 @@ The app remains a native desktop window with the same live answers, providers, c
 
 ## macOS setup
 
-Use macOS 11 or newer on an Intel or Apple silicon Mac. From the project folder, run `bash run.sh`; it installs uv if needed, downloads managed Python 3.12 for the host architecture, and creates `.venv` with the locked macOS dependencies. No separate Python installation is needed. Use a native terminal on Apple silicon, rather than a Rosetta terminal, to avoid installing an emulated x64 runtime. `bash run.sh --update` reinstalls the locked packages without changing their versions.
+Use macOS 11 or newer on an Intel or Apple silicon Mac. From the project folder, run `bash run.sh`; it installs uv if needed, downloads managed Python 3.12 for the host architecture, and creates `.venv` with the locked macOS dependencies. No separate Python installation is needed. The launcher supports macOS's bundled Bash 3.2. Use a native terminal on Apple silicon, rather than a Rosetta terminal, to avoid installing an emulated x64 runtime. `bash run.sh --update` reinstalls the locked packages without changing their versions.
 
 For interview audio through headphones:
 
@@ -35,6 +35,24 @@ open VeyraCue.app
 The builder compiles the bundled AppleScript and adds the microphone usage description to the app's Info.plist. Keep `VeyraCue.app` in the project folder beside `silent_run.sh`; its launch path is resolved from the app's location. Double-click that app for subsequent launches. First-run downloads may take longer before the desktop window appears; inspect the log for startup failures. Revisit macOS permissions when changing Python environments, because the OS may identify the new interpreter separately.
 
 Screenshots use the native macOS screen-capture tool after Screen Recording permission is granted. Temporary screenshot files are deleted after loading; queued images remain in memory until sent to the selected vision engine or cleared.
+
+### macOS startup troubleshooting
+
+If startup worked with `DEV_MODE=true` but failed with `DEV_MODE=false`, update the checkout with `git pull --ff-only`, keep `DEV_MODE=false` in the project's `.env`, and run `bash run.sh`. Normal startup requests capture exclusion; development mode skips that request and enables webview debugging. Native window lookup, the sharing setter, and its verification now run on Cocoa's main thread, including when pywebview invokes the shown callback from a worker thread. This fixes an unsafe production startup path without changing transcription or answer generation.
+
+If macOS cannot apply or verify capture exclusion, the app logs a warning and continues setup. `NSWindowSharingNone applied` confirms the window setting, but exclusion still depends on macOS and the recording method. `Capture exclusion unavailable` or `Native NSWindow unavailable` means exclusion was not confirmed; the overlay may appear in shared screens. Test the recording method you actually use.
+
+For a silent launch that produces no window, inspect its diagnostics:
+
+```bash
+tail -n 80 output/desktop-launch.log
+sw_vers
+uname -m
+```
+
+Run `bash run.sh` in Terminal to see the full Python traceback if the error persists. An `APP_SYNC_FLAGS[@]: unbound variable` error comes from an older launcher under Bash 3.2; update `run.sh`. For a dependency import error, run `bash run.sh --update`. Launch through these scripts so the app uses its own managed `.venv`; a copied Windows environment or direct system-Python launch does not provide the macOS packages.
+
+After updating, confirm foreground startup with `DEV_MODE=false`, then test microphone permission, BlackHole playback, and answer scrolling during generation. Close the app before testing `bash silent_run.sh` or `VeyraCue.app` so the checks exercise a fresh launch.
 
 ## Linux setup
 
@@ -83,9 +101,11 @@ Mac global shortcuts use physical key codes so Option-generated symbols do not r
 
 ## Validation and limits
 
-Run `uv run --managed-python --python 3.12 -m pytest -q` from the project folder. It installs the development group and uses the same managed runtime. Tests cover launcher working directories, locked setup, background logging, setup failures, platform renderer selection, output/microphone separation, PCM conversion, permission errors, exact modifier handling, pause/cleanup, screenshots, and Windows regressions. Browser platform checks are in `tests/cross_platform_check.js`.
+Run `uv run --managed-python --python 3.12 -m pytest -q` from the project folder. It installs the development group and uses the same managed runtime. Tests cover launcher working directories, locked setup, background logging, setup failures, platform renderer selection, output/microphone separation, PCM conversion, permission errors, exact modifier handling, pause/cleanup, screenshots, and Windows regressions. macOS regressions exercise Cocoa lookup/setter/readback on the main thread, failed or unverifiable capture exclusion, and continued production setup after a sharing API error. Browser platform checks are in `tests/cross_platform_check.js`.
 
-The Debian/WSL X11 runtime check captured synthetic playback from a real PulseAudio monitor at 48kHz and exercised Qt window controls, an actual global shortcut dispatch, and native screenshot queuing. This uses a virtual desktop/test sink; it does not establish microphone/headphone behavior on every physical Linux device. Windows and Linux backend suites and browser platform checks also passed. Mac paths are covered by unit/bridge tests; physical MacBook testing remains outstanding.
+For this startup fix, the full suites passed on Windows (238 passed, 2 skipped) and Linux (230 passed, 10 skipped). The launcher regression also passed under Bash 3.2 compiled on Linux, covering normal, update, install, and silent startup. The same check reproduced the empty-array error in the old launcher. This verifies shell compatibility, not execution on macOS itself.
+
+The Debian/WSL X11 runtime check captured synthetic playback from a real PulseAudio monitor at 48kHz and exercised Qt window controls, an actual global shortcut dispatch, and native screenshot queuing. This uses a virtual desktop/test sink; it does not establish microphone/headphone behavior on every physical Linux device. Windows and Linux backend suites and browser platform checks also passed. The locked production dependencies resolve for both `aarch64-apple-darwin` and `x86_64-apple-darwin` in uv dry runs. These checks and the mocked Cocoa tests do not establish native Mac GUI or audio behavior; on-device testing of the reported Python error remains outstanding.
 
 Windows capture protection remains in its existing path. Linux has no app-level capture exclusion here; the overlay can be visible in screen sharing. macOS capture exclusion varies by OS and recording method. Share the meeting window/tab when that is appropriate to your workflow.
 

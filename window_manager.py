@@ -1619,6 +1619,13 @@ def _get_macos_nswindow(window):
     """Obtain native NSWindow from pywebview window instance on macOS."""
     if not IS_MACOS:
         return None
+    if threading.current_thread() is not threading.main_thread():
+        try:
+            from services.desktop import call_on_macos_ui
+            return call_on_macos_ui(lambda: _get_macos_nswindow(window))
+        except Exception as error:
+            print(f"⚠️ [macOS] Could not resolve native window: {error}")
+            return None
 
     # 1. Check window.native directly (can be NSWindow or WKWebView)
     native = getattr(window, 'native', None)
@@ -1662,36 +1669,32 @@ def _get_macos_nswindow(window):
 
 
 def _apply_macos_capture_protection(window) -> bool:
-    """Apply screen capture protection on macOS using Cocoa NSWindow setSharingType_(0).
-    
-    NSWindowSharingNone = 0 completely excludes the window from all screenshots,
-    screen sharing (Zoom, Teams, Meet), and screen recordings (OBS, QuickTime).
-    """
+    """Request NSWindowSharingNone; exclusion depends on macOS and the recorder."""
     print("🛡️ [macOS] APPLYING SCREEN CAPTURE PROTECTION...")
-    native_win = _get_macos_nswindow(window)
-    if not native_win:
-        time.sleep(0.1)
-        native_win = _get_macos_nswindow(window)
-        
-    if not native_win:
-        print("❌ [macOS] CRITICAL: Could not obtain native NSWindow reference! Screen capture protection NOT applied!")
-        return False
-        
     try:
-        # NSWindowSharingNone = 0
-        native_win.setSharingType_(0)
-        print("✅ [macOS] SUCCESS: NSWindowSharingNone (0) applied! Window is HIDDEN from screen capture/sharing!")
+        from services.desktop import call_on_macos_ui
+        native_win = _get_macos_nswindow(window)
+        if native_win is None:
+            time.sleep(0.1)
+            native_win = _get_macos_nswindow(window)
+        if native_win is None:
+            print("⚠️ [macOS] Native NSWindow unavailable; capture exclusion NOT applied.")
+            return False
+
+        # pywebview shown callbacks run on worker threads; Cocoa requires the UI thread.
+        call_on_macos_ui(lambda: native_win.setSharingType_(0))
+        if verify_protection(native_win) is not True:
+            return False
+        print("✅ [macOS] NSWindowSharingNone applied; exclusion depends on macOS and the recording method.")
         
         # Register native window with window_manager
         window_manager.set_native_window(native_win)
         window_manager.set_always_on_top(True)
         window_manager.hide_from_taskbar()
         
-        # Verify the protection was applied
-        verify_protection(native_win)
         return True
     except Exception as e:
-        print(f"❌ [macOS] FAILED: Could not set window sharing type: {e}")
+        print(f"⚠️ [macOS] Capture exclusion unavailable: {e}")
         return False
 
 
@@ -1779,6 +1782,13 @@ def verify_protection(hwnd) -> Optional[bool]:
     back as something else, and None when verification was not possible.
     """
     if IS_MACOS:
+        if threading.current_thread() is not threading.main_thread():
+            try:
+                from services.desktop import call_on_macos_ui
+                return call_on_macos_ui(lambda: verify_protection(hwnd))
+            except Exception as error:
+                print(f"⚠️ [macOS] Could not verify sharingType: {error}")
+                return None
         target = hwnd if hasattr(hwnd, 'sharingType') else window_manager.native_window
         if target and hasattr(target, 'sharingType'):
             try:

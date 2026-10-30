@@ -18,6 +18,8 @@ MacBooks capture meeting playback through BlackHole with a Multi-Output Device; 
 
 Use `run.bat --update` or `bash run.sh --update` to reinstall the locked packages when troubleshooting. Normal startup already synchronizes changes after a Git pull. The old `venv/` is left intact, and `.env`, provider configuration, and saved sessions are reused. Each device creates its own `.venv`; copy source/configuration as needed, never a virtual environment.
 
+On macOS, keep `DEV_MODE=false` for normal use. Production capture-exclusion calls run on Cocoa's main thread; an unavailable sharing API is reported while startup continues. The Unix launcher also supports Apple's bundled Bash 3.2. If only development mode used to launch, pull the latest changes and follow [macOS startup troubleshooting](CROSS_PLATFORM.md#macos-startup-troubleshooting). Native Mac GUI/audio testing is still required, and capture exclusion depends on the OS and recording method.
+
 API keys remain in `.env` and `ai_providers.json`. Only providers with usable configured keys appear in the setup. Existing Deepgram and answer/vision engines are reused; no Parakeet account or subscription is required.
 
 Choose **Interview** or **Regular call** during setup. Regular calls do not require a resume or interview details. Attach up to eight `.txt`/`.md` documents (60,000 characters per file, 120,000 total); the assistant selects relevant passages and includes source IDs. Answer text size is adjustable in the live workspace.
