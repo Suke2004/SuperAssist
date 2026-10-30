@@ -281,6 +281,11 @@ def test_unix_launcher_uses_own_directory_and_preserves_windows_venv(tmp_path):
     folder = tmp_path / 'VeyraCue with spaces'
     folder.mkdir()
     shutil.copy2(Path(main.__file__).with_name('run.sh'), folder / 'run.sh')
+    shutil.copy2(Path(main.__file__).with_name('silent_run.sh'), folder / 'silent_run.sh')
+    uv = folder / 'tools' / 'uv'
+    uv.parent.mkdir()
+    uv.write_text('#!/usr/bin/env bash\nprintf "uv-called %s\\n" "$*"\nexit "${TEST_UV_EXIT:-0}"\n')
+    uv.chmod(0o755)
     python = folder / '.venv' / 'bin' / 'python'
     python.parent.mkdir(parents=True)
     python.write_text('#!/usr/bin/env bash\nif [[ "$1" == -c ]]; then exit 0; fi\nprintf "desktop-started %s\\n%s\\n" "$1" "$PWD"\n')
@@ -288,17 +293,28 @@ def test_unix_launcher_uses_own_directory_and_preserves_windows_venv(tmp_path):
     windows_config = folder / 'venv' / 'pyvenv.cfg'
     windows_config.parent.mkdir()
     windows_config.write_text('existing Windows environment')
-    env = {**os.environ, 'DISPLAY': ':99'}
+    env = {**os.environ, 'DISPLAY': ':99', 'PATH': f'{uv.parent}{os.pathsep}{os.environ["PATH"]}'}
     launched = subprocess.run(['bash', str(folder / 'run.sh')], cwd=tmp_path,
                               env=env, capture_output=True, text=True, timeout=10)
     assert launched.returncode == 0, launched.stderr
     assert 'desktop-started main.py' in launched.stdout and str(folder) in launched.stdout
-    launched = subprocess.run(['bash', str(folder / 'run.sh'), '--silent'], cwd=tmp_path,
+    assert 'sync --locked --no-dev --managed-python --python 3.12' in launched.stdout
+    launched = subprocess.run(['bash', str(folder / 'run.sh'), '--update'], cwd=tmp_path,
                               env=env, capture_output=True, text=True, timeout=10)
-    assert launched.returncode == 0
+    assert launched.returncode == 0 and '--reinstall' in launched.stdout
+    launched = subprocess.run(['bash', str(folder / 'silent_run.sh')], cwd=tmp_path,
+                              env=env, capture_output=True, text=True, timeout=10)
+    assert launched.returncode == 0 and not launched.stdout
     log = folder / 'output' / 'desktop-launch.log'
     deadline = time.monotonic() + 5
     while (not log.exists() or 'desktop-started main.py' not in log.read_text()) and time.monotonic() < deadline:
         time.sleep(0.05)
     assert 'desktop-started main.py' in log.read_text()
     assert windows_config.read_text() == 'existing Windows environment'
+    launched = subprocess.run(['bash', str(folder / 'run.sh')], cwd=tmp_path,
+                              env={**env, 'TEST_UV_EXIT': '7'}, capture_output=True, text=True, timeout=10)
+    assert launched.returncode == 7 and 'desktop-started' not in launched.stdout
+    if sys.platform == 'linux':
+        launched = subprocess.run(['bash', str(folder / 'run.sh')], cwd=tmp_path,
+                                  env={**env, 'DISPLAY': '', 'WAYLAND_DISPLAY': ''}, capture_output=True, text=True, timeout=10)
+        assert launched.returncode != 0 and 'graphical Linux desktop' in launched.stderr

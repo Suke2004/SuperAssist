@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-exec bash "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run.sh" --silent
+exec bash "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/silent_run.sh"

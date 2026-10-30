@@ -1,3 +1,6 @@
 # Unix launchers must remain executable text when checked out from Windows.
 *.sh text eol=lf
 *.command text eol=lf
+*.applescript text eol=lf
+*.bat text eol=crlf
+*.vbs text eol=crlf

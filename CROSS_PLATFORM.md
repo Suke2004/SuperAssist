@@ -1,6 +1,6 @@
 # VeyraCue on Windows, MacBook, and Linux
 
-The app remains a native desktop window with the same live answers, providers, conversation history, answer scrolling, and vision queue. Existing `.env` and `ai_providers.json` files are reused locally. Install dependencies separately on each operating system; virtual environments cannot be copied between Windows, macOS, and Linux.
+The app remains a native desktop window with the same live answers, providers, conversation history, answer scrolling, and vision queue. Existing `.env` and `ai_providers.json` files are reused locally. uv supplies managed Python 3.12 and installs the platform-specific packages from a universal `uv.lock`. A missing, outdated, or newer system Python does not affect the launcher. Create `.venv` separately on each device; virtual environments cannot be copied between Windows, macOS, and Linux. The old `venv/` is not modified.
 
 | Platform | Desktop | Meeting audio | Global shortcuts |
 | --- | --- | --- | --- |
@@ -11,7 +11,7 @@ The app remains a native desktop window with the same live answers, providers, c
 
 ## macOS setup
 
-Use Python 3.10+ and macOS 11 or newer. Install a Python build matching your Mac's architecture. From the project folder, run `bash run.sh`; the launcher creates a Unix `.venv` and installs the macOS dependencies. It also supports `bash run.sh --update`.
+Use macOS 11 or newer on an Intel or Apple silicon Mac. From the project folder, run `bash run.sh`; it installs uv if needed, downloads managed Python 3.12 for the host architecture, and creates `.venv` with the locked macOS dependencies. No separate Python installation is needed. Use a native terminal on Apple silicon, rather than a Rosetta terminal, to avoid installing an emulated x64 runtime. `bash run.sh --update` reinstalls the locked packages without changing their versions.
 
 For interview audio through headphones:
 
@@ -23,26 +23,36 @@ For interview audio through headphones:
 
 In **System Settings → Privacy & Security**, grant **Microphone** for recording, **Accessibility/Input Monitoring** for global shortcuts, and **Screen Recording** for screenshots to the Python/launcher process identified by macOS. Restart the app after changing permissions. Without global shortcut permission, the Dock remains available and Show/Hide minimizes the window; click-through stays disabled so the app can be recovered.
 
-For background startup, run `bash run.sh --silent`, or allow `VeyraCue.command` to execute with `chmod +x VeyraCue.command` and double-click it. The command launcher may briefly open Terminal; the app then runs independently and logs to `output/desktop-launch.log`. Close the launcher terminal after it exits. First-run installation can take longer; check that log for startup errors.
+For background startup, run `bash silent_run.sh` (`bash run.sh --silent` also works). The app runs independently and logs to `output/desktop-launch.log`. `VeyraCue.command` can be made executable with `chmod +x VeyraCue.command` and double-clicked, but Finder briefly opens Terminal for it.
+
+For a completely terminal-free launcher, build the bundled AppleScript in the project folder:
+
+```bash
+bash build_macos_launcher.sh
+open VeyraCue.app
+```
+
+The builder compiles the bundled AppleScript and adds the microphone usage description to the app's Info.plist. Keep `VeyraCue.app` in the project folder beside `silent_run.sh`; its launch path is resolved from the app's location. Double-click that app for subsequent launches. First-run downloads may take longer before the desktop window appears; inspect the log for startup failures. Revisit macOS permissions when changing Python environments, because the OS may identify the new interpreter separately.
 
 Screenshots use the native macOS screen-capture tool after Screen Recording permission is granted. Temporary screenshot files are deleted after loading; queued images remain in memory until sent to the selected vision engine or cleared.
 
 ## Linux setup
 
-Use Python 3.10+ in a graphical desktop session. Qt WebEngine is installed by `run.sh`; PulseAudio or PipeWire's PulseAudio compatibility service must be running for native audio.
+Use a graphical desktop session with PulseAudio or PipeWire's PulseAudio compatibility service. uv installs managed Python 3.12 and Qt WebEngine; system Python and `python3-venv` are not required. The locked Qt wheels require glibc 2.34+ on x64 (for example Ubuntu 22.04+ or Debian 12+) and glibc 2.39+ on ARM64 (for example Ubuntu 24.04+). Alpine/musl and 32-bit Linux do not have the required desktop wheels in this lockfile.
 
 On Debian/Ubuntu, install the OS libraries before running the launcher:
 
 ```bash
-sudo apt-get install --no-install-recommends python3 python3-venv python3-dev build-essential linux-libc-dev libpulse0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libwayland-cursor0 libegl1 libnss3 libasound2 libdbus-1-3 libxkbcommon-x11-0 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 libxtst6
+sudo apt-get update
+sudo apt-get install --no-install-recommends curl ca-certificates build-essential linux-libc-dev libpulse0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libwayland-cursor0 libegl1 libnss3 libasound2 libdbus-1-3 libxkbcommon-x11-0 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 libxtst6
 bash run.sh
 ```
 
-Other distributions need their equivalent Qt/X11 and PulseAudio client libraries, plus Python/kernel development headers and a C compiler for pynput's evdev dependency. Keep your existing desktop audio server; do not install a second server over an active PipeWire setup. `pactl info` can confirm that PulseAudio or PipeWire's compatibility service is reachable.
+On Ubuntu 24.04+ use `libasound2t64` in place of `libasound2`. Other distributions need equivalent Qt/X11 and PulseAudio client libraries, kernel development headers, and a C compiler for pynput's evdev dependency. The managed Python distribution supplies its own Python headers. Keep your existing desktop audio server; do not install a second server over an active PipeWire setup. `pactl info` can confirm that PulseAudio or PipeWire's compatibility service is reachable.
 
 Choose **Linux system audio**, select the monitor of the headphones/speakers used by your meeting, and select your microphone separately. The default monitor follows the current default sink when listed. A specific selection remains tied to that device; restart after changing outputs. The capture implementation uses 48kHz mono PCM, source labels, bounded queues, playback status, and the existing device retry/transcription recovery path.
 
-Run `bash run.sh --silent` for background startup with no continuing terminal dependency. `bash run.sh --update` refreshes dependencies. Do not run the graphical app as root; Qt Chromium requires a normal desktop user.
+Run `bash silent_run.sh` for background startup with no terminal output or continuing terminal dependency. Inspect `output/desktop-launch.log` if no window appears. A desktop shortcut can use command `bash "/absolute/project/path/silent_run.sh"` with **Run in terminal** disabled. `bash run.sh --update` reinstalls locked dependencies. Do not run the graphical app as root; Qt Chromium requires a normal desktop user.
 
 Choose an **X11/Xorg session** at login for global shortcuts, click-through, taskbar hiding, and native screenshots. A compositor/window manager can override topmost, opacity, or taskbar requests. If global shortcuts are unavailable, taskbar hiding and click-through remain disabled and Show/Hide minimizes the window.
 
@@ -73,7 +83,7 @@ Mac global shortcuts use physical key codes so Option-generated symbols do not r
 
 ## Validation and limits
 
-Run `python -m pytest` in the platform's virtual environment. Tests cover platform renderer selection, output/microphone separation, PCM conversion, permission errors, exact modifier handling, pause/cleanup, screenshots, and Windows regressions. Browser platform checks are in `tests/cross_platform_check.js`.
+Run `uv run --managed-python --python 3.12 -m pytest -q` from the project folder. It installs the development group and uses the same managed runtime. Tests cover launcher working directories, locked setup, background logging, setup failures, platform renderer selection, output/microphone separation, PCM conversion, permission errors, exact modifier handling, pause/cleanup, screenshots, and Windows regressions. Browser platform checks are in `tests/cross_platform_check.js`.
 
 The Debian/WSL X11 runtime check captured synthetic playback from a real PulseAudio monitor at 48kHz and exercised Qt window controls, an actual global shortcut dispatch, and native screenshot queuing. This uses a virtual desktop/test sink; it does not establish microphone/headphone behavior on every physical Linux device. Windows and Linux backend suites and browser platform checks also passed. Mac paths are covered by unit/bridge tests; physical MacBook testing remains outstanding.
 

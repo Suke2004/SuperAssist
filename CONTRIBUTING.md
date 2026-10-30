@@ -18,17 +18,11 @@ run.bat
 chmod +x run.sh
 ./run.sh
 
-# OR manual setup:
-python -m venv venv
-# Windows:
-venv\Scripts\activate
-# macOS / Linux:
-source venv/bin/activate
-
-pip install -r requirements.txt
-cp .env.example .env
-cp ai_providers.example.json ai_providers.json
-python main.py
+# Development setup after installing uv:
+uv sync --locked --managed-python --python 3.12
+uv run --managed-python --python 3.12 -m pytest -q
+# The app creates .env from .env.example if missing; configure your local keys.
+uv run --managed-python --python 3.12 main.py
 ```
 
 ---
@@ -43,7 +37,7 @@ python main.py
    - Steps to reproduce
    - Expected vs actual behavior
    - Terminal/console output (if applicable)
-   - Your OS version and Python version
+   - Your OS/CPU architecture, uv version, and managed Python version
 
 ### 💡 Have a Feature Idea?
 
@@ -83,7 +77,13 @@ SuperAssist/
 ├── ai_providers.json       # AI provider config (secrets — not committed)
 ├── run.bat                 # Automated setup & launch script (Windows)
 ├── run.sh                  # Automated setup & launch script (macOS / Linux)
-└── silent_run.vbs          # Invisible launch for Windows
+├── silent_run.vbs          # Invisible launch for Windows
+├── silent_run.sh           # Quiet background launch for macOS / Linux
+├── VeyraCue.applescript    # Source for a terminal-free macOS app launcher
+├── build_macos_launcher.sh # Build the app bundle with microphone permission metadata
+├── pyproject.toml          # Runtime and development dependencies
+├── .python-version        # Managed Python minor version
+└── uv.lock                 # Universal locked package versions and hashes
 ```
 
 ---
@@ -130,6 +130,18 @@ Open a GitHub issue or start a Discussion — we're happy to help!
 
 ## Current desktop validation
 
-Use `venv\Scripts\python.exe -m pytest -q` for backend checks. Browser regression scripts in `tests/` cover dark layout, answer scrolling, microphone-optional native startup, audio transport, and current Windows hotkeys. Keep `.env`, `ai_providers.json`, transcript exports, and runtime `output/` artifacts out of commits. The current user workflow and complete shortcut list are in [README.md](README.md).
+Use `uv run --managed-python --python 3.12 -m pytest -q` for backend checks on every platform. Browser regression scripts in `tests/` cover dark layout, answer scrolling, microphone-optional native startup, audio transport, and current Windows hotkeys. Keep `.env`, `ai_providers.json`, transcript exports, generated `VeyraCue.app`, virtual environments, and runtime `output/` artifacts out of commits. The current user workflow and complete shortcut list are in [README.md](README.md).
 
-On macOS/Linux, install `requirements-dev.txt` into the Unix virtual environment and run `python -m pytest`. `tests/test_cross_platform.py` covers platform routing and source isolation; `tests/cross_platform_check.js` checks the native bridge flows in the browser. `tests/linux_runtime_check.py` exercises a real Qt/X11 desktop and a PulseAudio test sink named `veyracue_test`. Record virtual-desktop results separately from physical hardware/meeting validation. See [CROSS_PLATFORM.md](CROSS_PLATFORM.md) for the supported desktop/audio configurations.
+`tests/test_cross_platform.py` covers platform routing, Unix launchers, and source isolation; `tests/cross_platform_check.js` checks native bridge flows in the browser. `tests/linux_runtime_check.py` exercises a real Qt/X11 desktop and a PulseAudio test sink named `veyracue_test`. Record virtual-desktop results separately from physical hardware/meeting validation. See [CROSS_PLATFORM.md](CROSS_PLATFORM.md) for supported desktop/audio configurations.
+
+## Dependency changes
+
+`pyproject.toml` is the source of dependency declarations; `uv.lock` records exact versions and package hashes. Add runtime packages with `uv add <package>` and test tools with `uv add --dev <package>`. Keep OS-specific packages behind platform markers. Do not edit the generated requirements exports by hand. After changing dependencies, regenerate them:
+
+```bash
+uv export --locked --no-dev --no-hashes --output-file requirements.txt
+uv export --locked --only-group dev --no-hashes --output-file requirements-dev.txt
+uv lock --check --managed-python --python 3.12
+```
+
+Commit the metadata, lockfile, and both exports together. Launchers use `uv sync --locked --no-dev`, so a stale lock fails visibly instead of selecting different packages on a user's device. After changing the managed Python version, update `.python-version`, `requires-python`, both launcher requests, and these setup/test commands together. Never copy `.venv` between devices or remove an existing environment while its app is running.

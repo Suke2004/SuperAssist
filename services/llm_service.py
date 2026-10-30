@@ -155,6 +155,7 @@ class LLMManager:
         attempts_made = 0
         
         for attempt in range(max_attempts):
+            answer_timeout = asyncio.timeout_at(deadline)
             try:
                 if monotonic() >= deadline:
                     raise asyncio.TimeoutError("Answer deadline exceeded")
@@ -200,7 +201,7 @@ class LLMManager:
                     api_params["stream"] = True
                     async def read_stream():
                         nonlocal ttft_ms
-                        first_token_deadline = min(deadline, monotonic() + FIRST_TOKEN_TIMEOUT_SECONDS)
+                        first_token_deadline = monotonic() + FIRST_TOKEN_TIMEOUT_SECONDS
                         stream = await asyncio.wait_for(
                             self.client.chat.completions.create(**api_params),
                             timeout=max(0, first_token_deadline - monotonic()),
@@ -210,9 +211,11 @@ class LLMManager:
                         try:
                             iterator = stream.__aiter__()
                             while True:
-                                chunk_deadline = deadline if received_content else first_token_deadline
                                 try:
-                                    chunk = await asyncio.wait_for(iterator.__anext__(), max(0, chunk_deadline - monotonic()))
+                                    if received_content:
+                                        chunk = await iterator.__anext__()
+                                    else:
+                                        chunk = await asyncio.wait_for(iterator.__anext__(), max(0, first_token_deadline - monotonic()))
                                 except StopAsyncIteration:
                                     break
                                 if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
@@ -235,13 +238,12 @@ class LLMManager:
                                 if inspect.isawaitable(result):
                                     await result
 
-                    answer = await asyncio.wait_for(read_stream(), max(0, deadline - monotonic()))
+                    async with answer_timeout:
+                        answer = await read_stream()
                 else:
                     # Non-streaming API call
-                    chat_completion = await asyncio.wait_for(
-                        self.client.chat.completions.create(**api_params),
-                        timeout=max(0, deadline - monotonic())
-                    )
+                    async with answer_timeout:
+                        chat_completion = await self.client.chat.completions.create(**api_params)
                     answer = (chat_completion.choices[0].message.content or '').strip() if chat_completion.choices else ''
 
                 if not answer:
@@ -272,7 +274,8 @@ class LLMManager:
                 app_metrics.provider_error(self.provider_name)
                 # C8: only rotate to the next key when retrying can help
                 # (auth/rate-limit/5xx/network). Client errors fail fast.
-                if not is_retryable_error(e) or monotonic() >= deadline:
+                # Timeout expiry is authoritative even on Windows' coarse Python 3.12 clock.
+                if answer_timeout.expired() or not is_retryable_error(e) or monotonic() >= deadline:
                     break
                 continue
         

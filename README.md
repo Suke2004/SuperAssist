@@ -4,9 +4,19 @@ VeyraCue is a local desktop interview workspace with live transcription, suggest
 
 ## Launch and setup
 
-Double-click `silent_run.vbs` to launch the desktop window with a hidden terminal. Use `run.bat` for diagnostic output. The launcher uses the existing virtual environment and provider configuration. Startup errors are recorded in `output/desktop-launch.log`.
+The launchers use [uv](https://docs.astral.sh/uv/) to download managed **Python 3.12** and install the exact dependencies in `uv.lock` into a local `.venv`. You do not need to install, upgrade, or activate system Python. First setup needs internet access; later launches reuse the environment and check the lockfile. Windows uses PowerShell to install uv if missing; macOS/Linux use `curl` and the official uv installer. You can [install uv manually](https://docs.astral.sh/uv/getting-started/installation/) first if your network blocks the installer.
 
-On macOS/Linux, use `bash run.sh` or `bash run.sh --silent` for background startup. MacBooks capture meeting playback through BlackHole with a Multi-Output Device; Linux uses PulseAudio/PipeWire monitors. Read [MacBook and Linux setup](CROSS_PLATFORM.md) for required audio routing, permissions, libraries, and Wayland behavior. Windows launchers, audio capture, and shortcuts keep their existing path.
+| Platform | Diagnostic launch | Silent launch |
+| --- | --- | --- |
+| Windows 10/11, x64 | `run.bat` | Double-click `silent_run.vbs` |
+| MacBook, Intel or Apple silicon | `bash run.sh` | `bash silent_run.sh`, or the macOS app described below |
+| Linux desktop, x64 or ARM64 | `bash run.sh` | `bash silent_run.sh` |
+
+Silent startup runs independently of the terminal and records diagnostics in `output/desktop-launch.log`. On macOS, `VeyraCue.command` is also available, but Finder briefly opens Terminal for a command file. To create a launcher that opens no Terminal, run `bash build_macos_launcher.sh` once in the project folder, then double-click `VeyraCue.app`. The builder includes the microphone permission description required by macOS. Keep that app beside `run.sh`; rebuild it if you move it elsewhere. For a Linux desktop shortcut, use your desktop's launcher editor with command `bash "/absolute/project/path/silent_run.sh"` and **Run in terminal** disabled.
+
+MacBooks capture meeting playback through BlackHole with a Multi-Output Device; Linux uses PulseAudio/PipeWire monitors. Read [MacBook and Linux setup](CROSS_PLATFORM.md) for audio routing, permissions, system libraries, and Wayland behavior. uv manages Python and Python packages; audio drivers, a supported graphical desktop, and OS libraries are still required.
+
+Use `run.bat --update` or `bash run.sh --update` to reinstall the locked packages when troubleshooting. Normal startup already synchronizes changes after a Git pull. The old `venv/` is left intact, and `.env`, provider configuration, and saved sessions are reused. Each device creates its own `.venv`; copy source/configuration as needed, never a virtual environment.
 
 API keys remain in `.env` and `ai_providers.json`. Only providers with usable configured keys appear in the setup. Existing Deepgram and answer/vision engines are reused; no Parakeet account or subscription is required.
 
@@ -15,8 +25,8 @@ Choose **Interview** or **Regular call** during setup. Regular calls do not requ
 Finalized speech, questions, answers, and screenshot analyses are checkpointed locally in `exports/sessions/` as JSON. **End** stops capture and saves a complete TXT export before showing the review screen. A save failure preserves the current record and offers retry. **Session history** opens saved records; **Generate AI summary** makes an explicit request to a configured engine and adds notes without replacing the raw record. These files contain conversation/profile content; API credentials are excluded. Live audio is not automatically restored after an app restart.
 
 1. Add your name, target role/company, resume, job description, and answer preferences.
-2. Continue to audio setup and choose **Windows direct audio**.
-3. Select the same headphones or speakers used by your meeting. The default option displays the current Windows output name.
+2. Continue to audio setup and choose **Windows direct audio**, **macOS routed audio**, or **Linux system audio** for your platform.
+3. Select the playback output or routed input used by your meeting. On macOS this is BlackHole; on Linux it is the playback monitor.
 4. Start the interview. Answers appear automatically, or turn off Auto answer and use **Answer** for the pending question. **Chat** sends a typed follow-up; **Screenshot** requests visual context.
 
 Windows direct audio uses WASAPI loopback and **does not ask to share the screen or audio**. It can capture a meeting or YouTube playing through the selected output. Screenshot capture asks for screen permission separately. Browser capture is an alternative that requires sharing a meeting tab or supported screen with its audio enabled.
@@ -89,7 +99,8 @@ Capture is tied to the chosen playback device. It includes other sound on that d
 - [Audio capture methods and recovery](AUDIO_PLAN.md)
 - [MacBook and Linux setup and shortcuts](CROSS_PLATFORM.md)
 - [Desktop window and click-through controls](PROCTORING_STEALTH_GUIDE.md)
-- Run backend checks with `venv\Scripts\python.exe -m pytest -q`.
+- Run backend checks with `uv run --managed-python --python 3.12 -m pytest -q`; uv installs the development group automatically.
+- Maintain dependencies in `pyproject.toml` and commit `uv.lock`. Use `uv add <package>` or `uv add --dev <package>`. `requirements.txt` and `requirements-dev.txt` are generated compatibility exports for Python 3.12; see [CONTRIBUTING.md](CONTRIBUTING.md) for regeneration commands.
 - Browser checks live in `tests/parakeet_workspace_check.js`, `tests/audio_workspace_check.js`, `tests/meeting_hotkeys_check.js`, and `tests/answer_audio_check.js`; they target the local validation server on port 8017.
 
 Based on the SuperAssist/Aura codebase under the existing [MIT license](LICENSE). The interface references [Parakeet AI's public workflow](https://www.parakeet-ai.com/); this is an independent local adaptation. Meeting shortcut references: [Zoom](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0067050) and [Google Meet](https://support.google.com/meet/answer/9298571?hl=en).

@@ -25,3 +25,4 @@ ai_providers.json
 exports/
 output/
 .playwright-cli/
+VeyraCue.app/

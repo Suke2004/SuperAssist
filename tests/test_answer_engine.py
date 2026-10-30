@@ -133,6 +133,18 @@ async def test_provider_deadline_bounds_midstream_and_key_retries(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_first_token_timeout_can_retry_within_the_answer_budget(monkeypatch):
+    slow = ScriptedStream([(10, 'too late')])
+    good = ScriptedStream(['finished answer'])
+    manager, _, create = make_manager(monkeypatch, [slow, good], keys=2)
+    monkeypatch.setattr(llm_service, 'FIRST_TOKEN_TIMEOUT_SECONDS', 0.02)
+    monkeypatch.setattr(llm_service, 'ANSWER_TIMEOUT_SECONDS', 1)
+    answer, info = await manager.get_ai_answer('What is caching?', AsyncMock())
+    assert answer == 'finished answer' and info['success']
+    assert slow.closed and good.closed and create.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_cancelled_stream_does_not_persist_partial_answer_or_retry(monkeypatch):
     stream = ScriptedStream(['partial', 'rest'])
     manager, _, create = make_manager(monkeypatch, [stream], keys=2)

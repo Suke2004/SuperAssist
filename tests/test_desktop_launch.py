@@ -1,5 +1,6 @@
 """Desktop startup and the hidden launcher, without opening an interview session."""
 import shutil
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,58 @@ import pytest
 import main
 from api import websocket as websocket_api
 from services import native_audio
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows batch launcher')
+@pytest.mark.parametrize('mode', ['normal', 'update', 'silent', 'setup-failure', 'app-failure'])
+def test_uv_windows_launcher_uses_project_runtime_and_propagates_failures(tmp_path, mode):
+    folder = tmp_path / 'VeyraCue with spaces & !'
+    folder.mkdir()
+    for filename in ('run.bat', 'silent_run.vbs'):
+        shutil.copy2(Path(main.__file__).with_name(filename), folder / filename)
+    tools = folder / 'tools'
+    tools.mkdir()
+    (tools / 'uv.cmd').write_text('@echo off\necho uv-called %*\nexit /b %TEST_UV_EXIT%\n')
+    (tools / 'python.cmd').write_text('@echo wrong-system-python\n@exit /b 99\n')
+    subprocess.run([sys.executable, '-m', 'venv', '--without-pip', str(folder / '.venv')], check=True, timeout=15)
+    (folder / 'main.py').write_text('import sys, os\nprint("desktop-started", sys.executable, os.getcwd())\nsys.exit(int(os.environ["TEST_APP_EXIT"]))\n')
+    (folder / 'venv').mkdir()
+    (folder / 'venv' / 'pyvenv.cfg').write_text('existing environment')
+    env = {**os.environ, 'PATH': f'{tools}{os.pathsep}{os.environ["PATH"]}',
+           'TEST_UV_EXIT': '7' if mode == 'setup-failure' else '0',
+           'TEST_APP_EXIT': '23' if mode == 'app-failure' else '0'}
+    if mode == 'silent':
+        command = ['cscript.exe', '//nologo', str(folder / 'silent_run.vbs')]
+    else:
+        command = [os.environ['COMSPEC'], '/d', '/c', 'call', str(folder / 'run.bat')]
+        if mode == 'update':
+            command.append('--update')
+    launched = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=20)
+    if mode == 'setup-failure':
+        assert launched.returncode != 0 and 'desktop-started' not in launched.stdout
+    else:
+        assert launched.returncode == (23 if mode == 'app-failure' else 0), launched.stderr
+        output = (folder / 'output' / 'desktop-launch.log').read_text(encoding='utf-8') if mode == 'silent' else launched.stdout
+        assert 'sync --locked --no-dev --managed-python --python 3.12' in output
+        assert str(folder / '.venv' / 'Scripts' / 'python.exe') in output
+        assert 'wrong-system-python' not in output
+        if mode == 'update':
+            assert '--reinstall' in output
+        if mode == 'silent':
+            assert not launched.stdout
+    assert (folder / 'venv' / 'pyvenv.cfg').read_text() == 'existing environment'
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='macOS AppleScript compiler')
+def test_macos_silent_launcher_compiles(tmp_path):
+    for filename in ('VeyraCue.applescript', 'build_macos_launcher.sh'):
+        shutil.copy2(Path(main.__file__).with_name(filename), tmp_path / filename)
+    launched = subprocess.run(['bash', str(tmp_path / 'build_macos_launcher.sh')],
+                              capture_output=True, text=True, timeout=15)
+    assert launched.returncode == 0, launched.stderr
+    description = subprocess.check_output(['/usr/libexec/PlistBuddy', '-c', 'Print :NSMicrophoneUsageDescription',
+                                           str(tmp_path / 'VeyraCue.app' / 'Contents' / 'Info.plist')], text=True)
+    assert 'microphone' in description
 
 
 def test_desktop_window_starts_on_top(monkeypatch):
