@@ -1,17 +1,20 @@
 # The check gate — lint, typecheck, test, build — on every push to main and every
 # pull request.
 #
-# One file, five repositories: SuperAssist, SuperTunnel, SuperBook, Taskpress and
-# PomoBuddies. SuperAgent keeps its own ci.yml, which is stricter than this one
-# (it adds an Android bundle and a coverage ratchet), so it is deliberately not
-# covered here: a second near-identical gate would double its CI minutes for no
-# extra signal.
+# One file, six repositories, byte for byte identical in each: SuperAgent,
+# SuperAssist, SuperTunnel, SuperBook, Taskpress and PomoBuddies. The moment this
+# file differs per repo it stops being one gate and becomes six opinions, and the
+# point of it is that "gate is green" means the same thing everywhere.
+#
+# SuperAgent also keeps its own ci.yml, which goes further than this one (a
+# coverage ratchet and an Android bundle). This file is still the one branch
+# protection requires, because a required check has to carry the same name in
+# every repo: `gate`.
 #
 # The workflow reads the checkout before it runs anything and only runs the gates
 # the repository actually has. A repo with no test suite gets "skipped: no test
-# script" printed in the run summary, not a green tick that means nothing.
-# Nothing below is repo-specific on purpose: the moment this file differs per
-# repo it stops being one gate and becomes five opinions.
+# script" in the run summary, not a green tick that means nothing. That is the
+# difference between this and a workflow copied around until it goes green.
 name: Check gate
 
 on:
