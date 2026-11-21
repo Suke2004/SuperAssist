@@ -1,22 +1,16 @@
 # Gitleaks configuration — one file, six repositories, identical in each.
 #
-# It extends the default rule set and weakens nothing in it. There is no broad
-# path allowlist here on purpose: an allowlist covering "tests/" is how a live key
-# gets shipped inside a test fixture, and the fixtures that legitimately contain a
-# fake key already say so on the line itself:
+# It extends the default rule set and weakens nothing in it. Deliberately there is
+# no allowlist here: not a path, not a rule. An allowlist is how a live key gets
+# shipped inside a test fixture, because "tests/ are only fixtures" is true right
+# up until the day someone pastes a real key into one.
+#
+# A deliberate fake is marked on its own line instead:
 #
 #     const KEY = 'sk-live-not-a-real-key'; // gitleaks:allow
 #
-# Use that comment for a deliberate fake. Never for a real one: rotate it instead.
+# A real leak in history is listed by fingerprint in .gitleaksignore, which names
+# the exact commit, file, rule and line — never a whole directory.
 
 [extend]
 useDefault = true
-
-[allowlist]
-description = "Non-live example credentials, documented in prose"
-# One documentation file quotes a request whose bearer token is the literal
-# placeholder "sk-invalid", as the reproduction of a 401. The path is allowlisted
-# rather than the content, and it is the only path allowlisted.
-paths = [
-  '''docs/flaws\.md''',
-]
